@@ -2,14 +2,16 @@ import AppKit
 import CodexContextCore
 import Foundation
 import SwiftUI
+import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let dashboardState = DashboardState()
     private let text = AppText.current
     private let selectedSessionKey = "selectedSessionID"
     private let clearBaselinesKey = "clearBaselines"
+    private let contextUsageNotificationThreshold = 0.50
     private var timer: Timer?
     private var refreshTask: Task<Void, Never>?
     private var compressionTask: Task<Void, Never>?
@@ -23,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var loadingSessionID: String?
     private var selectedSessionID: String?
     private var clearBaselines: [String: ContextBaseline] = [:]
+    private var contextUsageNotificationHandledSessionIDs: Set<String> = []
+    private var contextUsageNotificationPendingSessionIDs: Set<String> = []
     private lazy var relativeDateFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
@@ -32,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        UNUserNotificationCenter.current().delegate = self
         selectedSessionID = UserDefaults.standard.string(forKey: selectedSessionKey)
         clearBaselines = loadClearBaselines()
         dashboardState.onClear = { [weak self] in
@@ -115,9 +120,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         loadingSessionID = nil
         lastSnapshot = result.snapshot
         recentSessions = result.recentSessions
+        updateContextUsageNotification(for: result.snapshot)
         statusItem.button?.title = statusTitle(result.snapshot)
         updateMenu(isLoading: false)
         syncDashboardState(isLoading: false)
+    }
+
+    private func updateContextUsageNotification(for snapshot: ContextSnapshot) {
+        guard let sessionID = snapshot.session?.id, snapshot.contextWindow > 0 else {
+            return
+        }
+
+        guard snapshot.usageRatio >= contextUsageNotificationThreshold else {
+            contextUsageNotificationHandledSessionIDs.remove(sessionID)
+            contextUsageNotificationPendingSessionIDs.remove(sessionID)
+            return
+        }
+
+        guard !contextUsageNotificationHandledSessionIDs.contains(sessionID),
+              !contextUsageNotificationPendingSessionIDs.contains(sessionID) else {
+            return
+        }
+
+        contextUsageNotificationPendingSessionIDs.insert(sessionID)
+        let title = text.contextUsageNotificationTitle
+        let body = text.contextUsageNotificationBody(formatPercent(snapshot.usageRatio))
+
+        Task { [weak self] in
+            _ = await Self.submitContextUsageNotification(
+                title: title,
+                body: body,
+                sessionID: sessionID
+            )
+
+            guard let self else {
+                return
+            }
+            if contextUsageNotificationPendingSessionIDs.remove(sessionID) != nil {
+                contextUsageNotificationHandledSessionIDs.insert(sessionID)
+            }
+        }
     }
 
     private func updateMenu(isLoading: Bool) {
@@ -551,6 +593,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dashboardWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+    }
+
+    nonisolated private static func submitContextUsageNotification(
+        title: String,
+        body: String,
+        sessionID: String
+    ) async -> Bool {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+
+        let isAuthorized: Bool
+        switch settings.authorizationStatus {
+        case .authorized, .provisional:
+            isAuthorized = true
+        case .notDetermined:
+            isAuthorized = (try? await center.requestAuthorization(options: [.alert])) == true
+        default:
+            isAuthorized = false
+        }
+
+        guard isAuthorized else {
+            return false
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.threadIdentifier = "codex-context-usage"
+
+        let request = UNNotificationRequest(
+            identifier: "codex-context-usage-\(sessionID)-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+
+        do {
+            try await center.add(request)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .list]
     }
 }
 
