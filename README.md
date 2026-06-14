@@ -28,6 +28,25 @@ swift run CodexContextMonitor
 open "build/Codex Context Monitor.app"
 ```
 
+## Build The DMG
+
+```sh
+./scripts/build_dmg.sh
+open dist/Codex-Context-Monitor.dmg
+```
+
+## GitHub Release
+
+The `Build DMG` workflow can be run manually from GitHub Actions. It also runs
+automatically for version tags:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Tag builds create a GitHub Release and upload the DMG.
+
 ## Notes
 
 - The percentage uses Codex's own latest `token_count` event when available.

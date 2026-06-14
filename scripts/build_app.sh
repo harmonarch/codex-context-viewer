@@ -4,18 +4,35 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="Codex Context Monitor"
 CONFIGURATION="${CONFIGURATION:-release}"
-BUILD_DIR="$ROOT/.build/$CONFIGURATION"
 APP_DIR="$ROOT/build/$APP_NAME.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 
 cd "$ROOT"
-swift build -c "$CONFIGURATION"
+if [[ "${UNIVERSAL:-0}" == "1" ]]; then
+  swift build -c "$CONFIGURATION" --arch arm64 --arch x86_64
+else
+  swift build -c "$CONFIGURATION"
+fi
+
+if [[ "${UNIVERSAL:-0}" == "1" ]]; then
+  case "$CONFIGURATION" in
+    debug) PRODUCT_CONFIGURATION="Debug" ;;
+    release) PRODUCT_CONFIGURATION="Release" ;;
+    *)
+      echo "Unsupported universal build configuration: $CONFIGURATION" >&2
+      exit 1
+      ;;
+  esac
+  EXECUTABLE="$ROOT/.build/apple/Products/$PRODUCT_CONFIGURATION/CodexContextMonitor"
+else
+  EXECUTABLE="$ROOT/.build/$CONFIGURATION/CodexContextMonitor"
+fi
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS" "$RESOURCES"
-cp "$BUILD_DIR/CodexContextMonitor" "$MACOS/Codex Context Monitor"
+cp "$EXECUTABLE" "$MACOS/Codex Context Monitor"
 cp -R "$ROOT/Sources/CodexContextMonitor/Resources/." "$RESOURCES/"
 
 cat > "$CONTENTS/Info.plist" <<'PLIST'
