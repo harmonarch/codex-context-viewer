@@ -1,0 +1,721 @@
+import AppKit
+import CodexContextCore
+import Foundation
+import SwiftUI
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let dashboardState = DashboardState()
+    private let text = AppText.current
+    private let selectedSessionKey = "selectedSessionID"
+    private let clearBaselinesKey = "clearBaselines"
+    private var timer: Timer?
+    private var refreshTask: Task<Void, Never>?
+    private var compressionTask: Task<Void, Never>?
+    private var dashboardWindow: NSWindow?
+    private var refreshGeneration = 0
+    private var refreshInProgress = false
+    private var showsLoadingState = false
+    private var compressionStatus: CompressionStatus?
+    private var lastSnapshot: ContextSnapshot?
+    private var recentSessions: [SessionChoice] = []
+    private var loadingSessionID: String?
+    private var selectedSessionID: String?
+    private var clearBaselines: [String: ContextBaseline] = [:]
+    private lazy var relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        formatter.locale = text.locale
+        return formatter
+    }()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        selectedSessionID = UserDefaults.standard.string(forKey: selectedSessionKey)
+        clearBaselines = loadClearBaselines()
+        dashboardState.onClear = { [weak self] in
+            self?.clearNow()
+        }
+        dashboardState.onUndoClear = { [weak self] in
+            self?.undoClear()
+        }
+        dashboardState.onSelectSession = { [weak self] id in
+            self?.selectSession(id: id)
+        }
+        dashboardState.onSelectAutoLatest = { [weak self] in
+            self?.selectAutoLatest()
+        }
+        dashboardState.onCompress = { [weak self] in
+            self?.compressCurrentSession()
+        }
+
+        statusItem.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: text.codexContext)
+        statusItem.button?.imagePosition = .imageLeading
+        statusItem.button?.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+        statusItem.button?.title = "Codex ..."
+        updateMenu(isLoading: true)
+        showDashboard()
+
+        refresh(showLoading: true, priority: .userInitiated)
+        timer = Timer.scheduledTimer(
+            timeInterval: 5,
+            target: self,
+            selector: #selector(refreshFromTimer),
+            userInfo: nil,
+            repeats: true
+        )
+    }
+
+    private func refresh(showLoading: Bool, priority: TaskPriority) {
+        if !showLoading, refreshInProgress {
+            return
+        }
+
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        let selectedSessionID = selectedSessionID
+        let clearBaselines = clearBaselines
+        let cachedSessions = recentSessions
+
+        refreshInProgress = true
+        showsLoadingState = showLoading || lastSnapshot == nil
+        if showLoading || lastSnapshot == nil {
+            loadingSessionID = selectedSessionID
+            updateMenu(isLoading: true)
+        }
+        syncDashboardState(isLoading: showsLoadingState)
+
+        refreshTask?.cancel()
+        refreshTask = Task.detached(priority: priority) {
+            let result = RefreshLoader.load(
+                selectedSessionID: selectedSessionID,
+                clearBaselines: clearBaselines,
+                cachedSessions: cachedSessions,
+                menuSessionLimit: 15
+            )
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await MainActor.run {
+                self.applyRefreshResult(result, generation: generation)
+            }
+        }
+    }
+
+    private func applyRefreshResult(_ result: RefreshResult, generation: Int) {
+        guard generation == refreshGeneration else {
+            return
+        }
+
+        refreshInProgress = false
+        showsLoadingState = false
+        loadingSessionID = nil
+        lastSnapshot = result.snapshot
+        recentSessions = result.recentSessions
+        statusItem.button?.title = statusTitle(result.snapshot)
+        updateMenu(isLoading: false)
+        syncDashboardState(isLoading: false)
+    }
+
+    private func updateMenu(isLoading: Bool) {
+        let menuSnapshot = snapshotForCurrentSelection()
+        statusItem.menu = buildMenu(
+            snapshot: menuSnapshot,
+            sessions: recentSessions,
+            isLoading: isLoading || showsLoadingState
+        )
+    }
+
+    private func syncDashboardState(isLoading: Bool) {
+        dashboardState.snapshot = snapshotForCurrentSelection()
+        dashboardState.sessions = recentSessions
+        dashboardState.isLoading = isLoading
+        dashboardState.selectedSessionID = selectedSessionID
+        dashboardState.loadingSessionID = loadingSessionID
+        dashboardState.clearBaselines = clearBaselines
+        dashboardState.compressionStatus = compressionStatus
+    }
+
+    private func snapshotForCurrentSelection() -> ContextSnapshot? {
+        guard let selectedSessionID else {
+            return lastSnapshot
+        }
+
+        guard lastSnapshot?.session?.id == selectedSessionID else {
+            return nil
+        }
+
+        return lastSnapshot
+    }
+
+    private func statusTitle(_ snapshot: ContextSnapshot) -> String {
+        guard snapshot.contextWindow > 0 else {
+            return "Codex --"
+        }
+        return "Codex \(formatPercent(snapshot.usageRatio))"
+    }
+
+    private func buildMenu(snapshot: ContextSnapshot?, sessions: [SessionChoice], isLoading: Bool) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        if let session = snapshot?.session {
+            menu.addItem(header(text.codexContext))
+            menu.addItem(label(text.session, session.name ?? shortID(session.id)))
+            menu.addItem(label(text.mode, selectedSessionID == nil ? text.autoLatest : text.pinned))
+            if let baseline = snapshot?.baseline {
+                menu.addItem(label(text.baselineSet, relativeDate(baseline.clearedAt)))
+            }
+            if let cwd = session.cwd {
+                menu.addItem(label(text.workspace, abbreviateHome(cwd)))
+            }
+            menu.addItem(label(text.updated, relativeDate(session.updatedAt)))
+        } else if let loadingSession = loadingSession() {
+            menu.addItem(header(text.codexContext))
+            menu.addItem(label(text.session, loadingSession.name ?? shortID(loadingSession.id)))
+            menu.addItem(label(text.mode, selectedSessionID == nil ? text.autoLatest : text.pinned))
+            if let cwd = loadingSession.cwd {
+                menu.addItem(label(text.workspace, abbreviateHome(cwd)))
+            }
+            menu.addItem(label(text.status, text.loading))
+        } else if isLoading {
+            menu.addItem(header(text.codexContext))
+            menu.addItem(disabled(text.loadingSessionData))
+        } else {
+            menu.addItem(header(text.codexContext))
+            menu.addItem(disabled(text.noActiveUserSessionFound))
+        }
+
+        menu.addItem(.separator())
+        if let snapshot {
+            menu.addItem(label(text.context, contextLine(snapshot)))
+            menu.addItem(label(text.lastInput, text.tokenCount(formatTokens(snapshot.displayInputTokens))))
+            menu.addItem(label(text.cachedInput, text.tokenCount(formatTokens(snapshot.displayCachedInputTokens))))
+            menu.addItem(label(text.runTotal, text.tokenCount(formatTokens(snapshot.displayTotalRunTokens))))
+            if snapshot.baseline != nil {
+                menu.addItem(label(text.actualContext, text.percentOf(formatPercent(snapshot.usageRatio), formatTokens(snapshot.contextWindow))))
+                menu.addItem(disabled(text.displayResetHint))
+            }
+        } else {
+            menu.addItem(label(text.context, isLoading ? text.loading : text.waitingForTokenData))
+        }
+
+        menu.addItem(.separator())
+        menu.addItem(sessionPickerItem(currentSessionID: snapshot?.session?.id, sessions: sessions, isLoading: isLoading))
+
+        if let snapshot, !snapshot.warnings.isEmpty {
+            menu.addItem(.separator())
+            for warning in snapshot.warnings {
+                menu.addItem(disabled(text.warning(warning)))
+            }
+        }
+
+        menu.addItem(.separator())
+        if let snapshot, !snapshot.categories.isEmpty {
+            for category in snapshot.categories {
+                menu.addItem(categoryItem(category, total: max(snapshot.estimatedCategoryTokens, 1)))
+            }
+        } else {
+            menu.addItem(disabled(isLoading ? text.loadingBreakdown : text.noBreakdownAvailableYet))
+        }
+
+        menu.addItem(.separator())
+        let dashboardItem = NSMenuItem(title: text.openDashboard, action: #selector(openDashboard), keyEquivalent: "o")
+        dashboardItem.target = self
+        menu.addItem(dashboardItem)
+
+        if snapshot?.session != nil {
+            let compressItem = NSMenuItem(title: text.compressCurrentSession, action: #selector(compressCurrentSession), keyEquivalent: "")
+            compressItem.target = self
+            compressItem.isEnabled = compressionStatus != .compressing
+            menu.addItem(compressItem)
+
+            let clearItem = NSMenuItem(title: text.clearNow, action: #selector(clearNow), keyEquivalent: "")
+            clearItem.target = self
+            menu.addItem(clearItem)
+        }
+
+        if let sessionID = snapshot?.session?.id, clearBaselines[sessionID] != nil {
+            let undoClearItem = NSMenuItem(title: text.undoClear, action: #selector(undoClear), keyEquivalent: "")
+            undoClearItem.target = self
+            menu.addItem(undoClearItem)
+        }
+
+        if let path = snapshot?.session?.path.path {
+            let openItem = NSMenuItem(title: text.revealSessionFile, action: #selector(revealSessionFile), keyEquivalent: "")
+            openItem.target = self
+            openItem.representedObject = path
+            menu.addItem(openItem)
+        }
+
+        menu.addItem(NSMenuItem(title: text.quit, action: #selector(quit), keyEquivalent: "q"))
+        menu.items.last?.target = self
+        return menu
+    }
+
+    private func loadingSession() -> SessionChoice? {
+        guard let id = loadingSessionID ?? selectedSessionID else {
+            return recentSessions.first
+        }
+        return recentSessions.first { $0.id == id }
+    }
+
+    private func sessionPickerItem(currentSessionID: String?, sessions: [SessionChoice], isLoading: Bool) -> NSMenuItem {
+        let item = NSMenuItem(title: text.sessions, action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+
+        let autoItem = NSMenuItem(title: text.autoLatestTitle, action: #selector(selectAutoLatest), keyEquivalent: "")
+        autoItem.target = self
+        autoItem.state = selectedSessionID == nil ? .on : .off
+        submenu.addItem(autoItem)
+        submenu.addItem(.separator())
+
+        if sessions.isEmpty {
+            submenu.addItem(disabled(isLoading ? text.loadingSessions : text.noSessionsFound))
+        } else {
+            for session in sessions {
+                let title = sessionTitle(session)
+                let sessionItem = NSMenuItem(title: title, action: #selector(selectSession(_:)), keyEquivalent: "")
+                sessionItem.target = self
+                sessionItem.representedObject = session.id
+                sessionItem.state = session.id == (selectedSessionID ?? currentSessionID)
+                    ? NSControl.StateValue.on
+                    : NSControl.StateValue.off
+                sessionItem.toolTip = [
+                    session.cwd.map(abbreviateHome),
+                    session.id,
+                    session.path.path
+                ].compactMap { $0 }.joined(separator: "\n")
+                submenu.addItem(sessionItem)
+            }
+        }
+
+        item.submenu = submenu
+        return item
+    }
+
+    private func categoryItem(_ category: ContextCategory, total: Int) -> NSMenuItem {
+        let ratio = Double(category.tokens) / Double(total)
+        let item = NSMenuItem(title: "\(text.categoryName(category.kind))  \(formatTokens(category.tokens))  \(formatPercent(ratio))", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+
+        let shown = category.items.prefix(20)
+        for detail in shown {
+            let count = detail.count > 1 ? " x\(detail.count)" : ""
+            let title = "\(text.displayItemTitle(detail.title))\(count)  \(formatTokens(detail.tokens))"
+            let child = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            if let subtitle = detail.subtitle, !subtitle.isEmpty {
+                child.toolTip = text.displayItemSubtitle(subtitle)
+            }
+            submenu.addItem(child)
+        }
+
+        if category.items.count > shown.count {
+            submenu.addItem(.separator())
+            submenu.addItem(disabled(text.moreItems(category.items.count - shown.count)))
+        }
+
+        item.submenu = submenu
+        return item
+    }
+
+    private func contextLine(_ snapshot: ContextSnapshot) -> String {
+        guard snapshot.contextWindow > 0 else {
+            return text.waitingForTokenData
+        }
+        let usage = text.percentOf(formatPercent(snapshot.displayUsageRatio), formatTokens(snapshot.contextWindow))
+        return snapshot.baseline == nil ? usage : "\(text.sinceClear): \(usage)"
+    }
+
+    private func header(_ title: String) -> NSMenuItem {
+        let item = disabled(title)
+        item.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize),
+                .foregroundColor: NSColor.labelColor
+            ]
+        )
+        return item
+    }
+
+    private func label(_ title: String, _ value: String) -> NSMenuItem {
+        disabled("\(title): \(value)")
+    }
+
+    private func disabled(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
+    private func formatPercent(_ value: Double) -> String {
+        "\(Int((value * 100).rounded()))%"
+    }
+
+    private func formatTokens(_ value: Int) -> String {
+        if value >= 1_000_000 {
+            return String(format: "%.1fM", Double(value) / 1_000_000)
+        }
+        if value >= 1_000 {
+            return String(format: "%.1fk", Double(value) / 1_000)
+        }
+        return "\(value)"
+    }
+
+    private func relativeDate(_ date: Date) -> String {
+        relativeDateFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func shortID(_ id: String) -> String {
+        String(id.prefix(8))
+    }
+
+    private func sessionTitle(_ session: SessionChoice) -> String {
+        let name = session.name ?? shortID(session.id)
+        return "\(name)  \(relativeDate(session.updatedAt))"
+    }
+
+    private func abbreviateHome(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path.hasPrefix(home) {
+            return "~" + path.dropFirst(home.count)
+        }
+        return path
+    }
+
+    private func loadClearBaselines() -> [String: ContextBaseline] {
+        guard let data = UserDefaults.standard.data(forKey: clearBaselinesKey),
+              let baselines = try? JSONDecoder().decode([String: ContextBaseline].self, from: data) else {
+            return [:]
+        }
+        return baselines
+    }
+
+    private func saveClearBaselines() {
+        guard let data = try? JSONEncoder().encode(clearBaselines) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: clearBaselinesKey)
+    }
+
+    private func lineCount(for url: URL) -> Int {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            return 0
+        }
+        return text.split(separator: "\n", omittingEmptySubsequences: true).count
+    }
+
+    @objc private func refreshFromTimer() {
+        refresh(showLoading: false, priority: .utility)
+    }
+
+    @objc private func clearNow() {
+        guard let snapshot = lastSnapshot,
+              let session = snapshot.session else {
+            return
+        }
+
+        clearBaselines[session.id] = ContextBaseline(
+            sessionID: session.id,
+            lineCount: lineCount(for: session.path),
+            lastInputTokens: snapshot.lastInputTokens,
+            cachedInputTokens: snapshot.cachedInputTokens,
+            totalRunTokens: snapshot.totalRunTokens,
+            clearedAt: Date()
+        )
+        saveClearBaselines()
+        refresh(showLoading: true, priority: .userInitiated)
+    }
+
+    @objc private func undoClear() {
+        guard let sessionID = lastSnapshot?.session?.id else {
+            return
+        }
+        clearBaselines.removeValue(forKey: sessionID)
+        saveClearBaselines()
+        refresh(showLoading: true, priority: .userInitiated)
+    }
+
+    @objc private func compressCurrentSession() {
+        guard compressionStatus != .compressing else {
+            return
+        }
+        guard let session = snapshotForCurrentSelection()?.session ?? lastSnapshot?.session else {
+            compressionStatus = .failed(text.noActiveUserSessionFound)
+            updateMenu(isLoading: showsLoadingState || refreshInProgress)
+            syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+            return
+        }
+
+        compressionTask?.cancel()
+        compressionStatus = .compressing
+        updateMenu(isLoading: showsLoadingState || refreshInProgress)
+        syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+
+        compressionTask = Task.detached(priority: .userInitiated) {
+            let result: Result<SessionCompressionDraft, Error>
+            do {
+                result = .success(try SessionCompressor().compress(session: session))
+            } catch {
+                result = .failure(error)
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await MainActor.run {
+                self.applyCompressionResult(result)
+            }
+        }
+    }
+
+    private func applyCompressionResult(_ result: Result<SessionCompressionDraft, Error>) {
+        switch result {
+        case .success(let draft):
+            let rendered = CompressionRenderer(text: text).render(draft)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(rendered, forType: .string)
+            compressionStatus = .copied(Date(), TokenEstimator.estimate(rendered))
+        case .failure(let error):
+            let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            compressionStatus = .failed(message)
+        }
+        updateMenu(isLoading: showsLoadingState || refreshInProgress)
+        syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+    }
+
+    @objc private func selectAutoLatest() {
+        selectedSessionID = nil
+        loadingSessionID = nil
+        compressionStatus = nil
+        UserDefaults.standard.removeObject(forKey: selectedSessionKey)
+        updateMenu(isLoading: true)
+        refresh(showLoading: true, priority: .userInitiated)
+    }
+
+    @objc private func selectSession(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else {
+            return
+        }
+        selectSession(id: id)
+    }
+
+    private func selectSession(id: String) {
+        selectedSessionID = id
+        loadingSessionID = id
+        compressionStatus = nil
+        UserDefaults.standard.set(id, forKey: selectedSessionKey)
+        updateMenu(isLoading: true)
+        refresh(showLoading: true, priority: .userInitiated)
+    }
+
+    @objc private func revealSessionFile(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else {
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
+
+    @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    @objc private func openDashboard() {
+        showDashboard()
+    }
+
+    private func showDashboard() {
+        if dashboardWindow == nil {
+            let rootView = DashboardView(state: dashboardState)
+            let hostingView = NSHostingView(rootView: rootView)
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = text.windowTitle
+            window.titlebarAppearsTransparent = true
+            window.isReleasedWhenClosed = false
+            window.contentMinSize = NSSize(width: 980, height: 640)
+            window.contentView = hostingView
+            window.center()
+            dashboardWindow = window
+        }
+
+        dashboardWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+    }
+}
+
+private struct RefreshResult: Sendable {
+    let snapshot: ContextSnapshot
+    let recentSessions: [SessionChoice]
+}
+
+private enum RefreshLoader {
+    static func load(
+        selectedSessionID: String?,
+        clearBaselines: [String: ContextBaseline],
+        cachedSessions: [SessionChoice],
+        menuSessionLimit: Int
+    ) -> RefreshResult {
+        let analyzer = ContextAnalyzer()
+        let loadedSessions = analyzer.recentSessions(limit: menuSessionLimit)
+        let menuSessions = loadedSessions.isEmpty ? cachedSessions : loadedSessions
+        let session: SessionChoice?
+
+        if let selectedSessionID, !selectedSessionID.isEmpty {
+            session = cachedSessions.first { $0.id == selectedSessionID }
+                ?? menuSessions.first { $0.id == selectedSessionID }
+        } else {
+            session = menuSessions.first
+        }
+
+        let snapshot: ContextSnapshot
+        if let session {
+            do {
+                snapshot = try analyzer.snapshot(
+                    for: session,
+                    baseline: clearBaselines[session.id]
+                )
+            } catch {
+                snapshot = analyzer.snapshot(sessionID: selectedSessionID, baseline: selectedSessionID.flatMap { clearBaselines[$0] })
+            }
+        } else {
+            snapshot = analyzer.snapshot(sessionID: selectedSessionID, baseline: selectedSessionID.flatMap { clearBaselines[$0] })
+        }
+
+        return RefreshResult(snapshot: snapshot, recentSessions: menuSessions)
+    }
+}
+
+struct CompressionRenderer {
+    let text: AppText
+
+    func render(_ draft: SessionCompressionDraft) -> String {
+        var lines: [String] = []
+        lines.append(text.compressionDocumentTitle)
+        lines.append("")
+        lines.append(text.compressionDocumentIntro)
+        lines.append("")
+        lines.append("## \(text.compressionSectionSession)")
+        lines.append("- \(text.session): \(draft.session.name ?? shortID(draft.session.id))")
+        lines.append("- ID: \(draft.session.id)")
+        if let cwd = draft.session.cwd {
+            lines.append("- \(text.workspace): \(abbreviateHome(cwd))")
+        }
+        lines.append("- \(text.compressionSourceLines): \(draft.sourceLineCount)")
+        lines.append("- \(text.compressionSourceTokens): \(formatTokens(draft.sourceTokenEstimate))")
+        if draft.contextWindow > 0 {
+            lines.append("- \(text.contextWindow): \(formatTokens(draft.contextWindow))")
+        }
+        if draft.lastInputTokens > 0 {
+            lines.append("- \(text.actualContextUsed): \(formatTokens(draft.lastInputTokens))")
+        }
+        lines.append("")
+
+        appendMessages(
+            title: text.compressionSectionLatestUserRequests,
+            empty: text.compressionNoLatestUserRequests,
+            messages: draft.latestUserMessages,
+            into: &lines
+        )
+        lines.append("")
+
+        appendMessages(
+            title: text.compressionSectionRecentConversation,
+            empty: text.compressionNoRecentConversation,
+            messages: draft.recentMessages,
+            omittedCount: draft.omittedMessageCount,
+            into: &lines
+        )
+        lines.append("")
+
+        lines.append("## \(text.compressionSectionReferencedFiles)")
+        if draft.referencedFiles.isEmpty {
+            lines.append("- \(text.compressionNoReferencedFiles)")
+        } else {
+            for file in draft.referencedFiles {
+                lines.append("- `\(file)`")
+            }
+        }
+        lines.append("")
+
+        lines.append("## \(text.compressionSectionRecentToolActivity)")
+        if draft.recentToolActivities.isEmpty {
+            lines.append("- \(text.compressionNoToolActivity)")
+        } else {
+            for activity in draft.recentToolActivities {
+                lines.append("- \(activity.title): \(singleLine(activity.detail))")
+            }
+            if draft.omittedToolActivityCount > 0 {
+                lines.append("- \(text.compressionOmittedToolActivities(draft.omittedToolActivityCount))")
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func appendMessages(
+        title: String,
+        empty: String,
+        messages: [CompressedMessage],
+        omittedCount: Int = 0,
+        into lines: inout [String]
+    ) {
+        lines.append("## \(title)")
+        guard !messages.isEmpty else {
+            lines.append("- \(empty)")
+            return
+        }
+
+        for message in messages {
+            lines.append("- \(text.compressionRoleName(message.role)): \(singleLine(message.text))")
+        }
+        if omittedCount > 0 {
+            lines.append("- \(text.compressionOmittedMessages(omittedCount))")
+        }
+    }
+
+    private func singleLine(_ value: String) -> String {
+        value
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " / ")
+    }
+
+    private func formatTokens(_ value: Int) -> String {
+        if value >= 1_000_000 {
+            return String(format: "%.1fM", Double(value) / 1_000_000)
+        }
+        if value >= 1_000 {
+            return String(format: "%.1fk", Double(value) / 1_000)
+        }
+        return "\(value)"
+    }
+
+    private func shortID(_ id: String) -> String {
+        String(id.prefix(8))
+    }
+
+    private func abbreviateHome(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if path.hasPrefix(home) {
+            return "~" + path.dropFirst(home.count)
+        }
+        return path
+    }
+}
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.run()
