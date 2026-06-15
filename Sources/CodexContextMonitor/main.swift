@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private let selectedSessionKey = "selectedSessionID"
     private let clearBaselinesKey = "clearBaselines"
     private let contextUsageNotificationThreshold = 0.50
+    private var selectedTheme: AppThemeChoice = .saved
     private var timer: Timer?
     private var refreshTask: Task<Void, Never>?
     private var compressionTask: Task<Void, Never>?
@@ -54,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         dashboardState.onCompress = { [weak self] in
             self?.compressCurrentSession()
         }
+        applyThemeToWindow()
 
         statusItem.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: text.codexContext)
         statusItem.button?.imagePosition = .imageLeading
@@ -268,6 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let dashboardItem = NSMenuItem(title: text.openDashboard, action: #selector(openDashboard), keyEquivalent: "o")
         dashboardItem.target = self
         menu.addItem(dashboardItem)
+        menu.addItem(themePickerItem())
 
         if snapshot?.session != nil {
             let compressItem = NSMenuItem(title: text.compressCurrentSession, action: #selector(compressCurrentSession), keyEquivalent: "")
@@ -296,6 +299,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         menu.addItem(NSMenuItem(title: text.quit, action: #selector(quit), keyEquivalent: "q"))
         menu.items.last?.target = self
         return menu
+    }
+
+    private func themePickerItem() -> NSMenuItem {
+        let item = NSMenuItem(title: text.theme, action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+
+        for theme in AppThemeChoice.menuChoices {
+            let themeItem = NSMenuItem(title: theme.displayName(text), action: #selector(selectThemeFromMenu(_:)), keyEquivalent: "")
+            themeItem.target = self
+            themeItem.representedObject = theme.rawValue
+            themeItem.state = theme == selectedTheme ? NSControl.StateValue.on : NSControl.StateValue.off
+            submenu.addItem(themeItem)
+        }
+
+        item.submenu = submenu
+        return item
     }
 
     private func loadingSession() -> SessionChoice? {
@@ -563,6 +582,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
     }
 
+    @objc private func selectThemeFromMenu(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let theme = AppThemeChoice(rawValue: rawValue) else {
+            return
+        }
+        selectTheme(theme)
+    }
+
+    private func selectTheme(_ theme: AppThemeChoice) {
+        selectedTheme = theme
+        theme.save()
+        applyThemeToWindow()
+        updateMenu(isLoading: showsLoadingState || refreshInProgress)
+        syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+    }
+
+    private func applyThemeToWindow() {
+        dashboardWindow?.appearance = selectedTheme.windowAppearance
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
@@ -585,6 +624,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             window.titlebarAppearsTransparent = true
             window.isReleasedWhenClosed = false
             window.contentMinSize = NSSize(width: 980, height: 640)
+            window.appearance = selectedTheme.windowAppearance
             window.contentView = hostingView
             window.center()
             dashboardWindow = window
