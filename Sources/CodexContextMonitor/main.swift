@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var timer: Timer?
     private var refreshTask: Task<Void, Never>?
     private var compressionTask: Task<Void, Never>?
+    private var updateTask: Task<Void, Never>?
     private var dashboardWindow: NSWindow?
     private var refreshGeneration = 0
     private var refreshInProgress = false
@@ -26,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var loadingSessionID: String?
     private var selectedSessionID: String?
     private var displayBaselines: [String: ContextBaseline] = [:]
+    private var updateState: AppUpdateState = .idle
     private var contextUsageNotificationHandledSessionIDs: Set<String> = []
     private var contextUsageNotificationPendingSessionIDs: Set<String> = []
     private lazy var relativeDateFormatter: RelativeDateTimeFormatter = {
@@ -55,6 +57,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         dashboardState.onCompress = { [weak self] in
             self?.compressCurrentSession()
         }
+        dashboardState.onCheckForUpdates = { [weak self] in
+            self?.checkForUpdatesFromMenu()
+        }
+        dashboardState.onInstallUpdate = { [weak self] in
+            self?.installUpdate()
+        }
+        dashboardState.onOpenUpdateRelease = { [weak self] in
+            self?.openUpdateRelease()
+        }
         applyThemeToWindow()
 
         statusItem.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: text.codexContext)
@@ -65,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         showDashboard()
 
         refresh(showLoading: true, priority: .userInitiated)
+        checkForUpdates(showUpToDate: false, showFailure: false)
         timer = Timer.scheduledTimer(
             timeInterval: 5,
             target: self,
@@ -183,6 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         dashboardState.loadingSessionID = loadingSessionID
         dashboardState.displayBaselines = displayBaselines
         dashboardState.compressionStatus = compressionStatus
+        dashboardState.updateState = updateState
     }
 
     private func snapshotForCurrentSelection() -> ContextSnapshot? {
@@ -289,6 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         dashboardItem.target = self
         menu.addItem(dashboardItem)
         menu.addItem(themePickerItem())
+        menu.addItem(updateMenuItem())
 
         if snapshot?.session != nil {
             let compressItem = NSMenuItem(title: text.compressCurrentSession, action: #selector(compressCurrentSession), keyEquivalent: "")
@@ -333,6 +347,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         item.submenu = submenu
         return item
+    }
+
+    private func updateMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: updateMenuTitle, action: updateMenuAction, keyEquivalent: "")
+        item.target = self
+        item.isEnabled = updateMenuAction != nil
+        return item
+    }
+
+    private var updateMenuTitle: String {
+        switch updateState {
+        case .idle, .failed, .upToDate:
+            text.checkForUpdates
+        case .checking:
+            text.checkingForUpdates
+        case .available(let update):
+            text.downloadUpdateVersion(update.version)
+        case .downloading:
+            text.downloadingUpdate
+        case .downloaded:
+            text.openInstaller
+        }
+    }
+
+    private var updateMenuAction: Selector? {
+        switch updateState {
+        case .idle, .failed, .upToDate:
+            #selector(checkForUpdatesFromMenu)
+        case .available:
+            #selector(installUpdate)
+        case .downloaded:
+            #selector(installUpdate)
+        case .checking, .downloading:
+            nil
+        }
     }
 
     private func loadingSession() -> SessionChoice? {
@@ -569,6 +618,112 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    @objc private func checkForUpdatesFromMenu() {
+        checkForUpdates(showUpToDate: true, showFailure: true)
+    }
+
+    private func checkForUpdates(showUpToDate: Bool, showFailure: Bool) {
+        guard updateState != .checking, !updateState.isDownloading else {
+            return
+        }
+
+        updateTask?.cancel()
+        updateState = .checking
+        updateMenu(isLoading: showsLoadingState || refreshInProgress)
+        syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+
+        let currentVersion = currentAppVersion
+        updateTask = Task.detached(priority: .userInitiated) {
+            let result: Result<AppUpdate?, Error>
+            do {
+                result = .success(try await AppUpdater().latestUpdate(currentVersion: currentVersion))
+            } catch {
+                result = .failure(error)
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await MainActor.run {
+                switch result {
+                case .success(let update?):
+                    self.updateState = .available(update)
+                case .success(nil):
+                    self.updateState = showUpToDate ? .upToDate(Date()) : .idle
+                case .failure(let error):
+                    self.updateState = showFailure ? .failed(self.updateErrorMessage(error)) : .idle
+                }
+
+                self.updateMenu(isLoading: self.showsLoadingState || self.refreshInProgress)
+                self.syncDashboardState(isLoading: self.showsLoadingState || self.refreshInProgress)
+            }
+        }
+    }
+
+    @objc private func installUpdate() {
+        switch updateState {
+        case .available(let update):
+            downloadAndOpen(update)
+        case .downloaded(_, let url):
+            NSWorkspace.shared.open(url)
+        default:
+            break
+        }
+    }
+
+    private func downloadAndOpen(_ update: AppUpdate) {
+        guard !updateState.isDownloading else {
+            return
+        }
+
+        updateTask?.cancel()
+        updateState = .downloading(update)
+        updateMenu(isLoading: showsLoadingState || refreshInProgress)
+        syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+
+        updateTask = Task.detached(priority: .userInitiated) {
+            let result: Result<URL, Error>
+            do {
+                result = .success(try await AppUpdater().download(update))
+            } catch {
+                result = .failure(error)
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await MainActor.run {
+                switch result {
+                case .success(let url):
+                    self.updateState = .downloaded(update, url)
+                    NSWorkspace.shared.open(url)
+                case .failure(let error):
+                    self.updateState = .failed(self.updateErrorMessage(error))
+                }
+
+                self.updateMenu(isLoading: self.showsLoadingState || self.refreshInProgress)
+                self.syncDashboardState(isLoading: self.showsLoadingState || self.refreshInProgress)
+            }
+        }
+    }
+
+    @objc private func openUpdateRelease() {
+        guard let update = updateState.update else {
+            return
+        }
+        NSWorkspace.shared.open(update.releaseURL)
+    }
+
+    private var currentAppVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.3"
+    }
+
+    private func updateErrorMessage(_ error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+    }
+
     private func applyCompressionResult(_ result: Result<SessionCompressionDraft, Error>) {
         switch result {
         case .success(let draft):
@@ -715,6 +870,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
         [.banner, .list]
+    }
+}
+
+private extension AppUpdateState {
+    var isDownloading: Bool {
+        if case .downloading = self {
+            return true
+        }
+        return false
+    }
+
+    var update: AppUpdate? {
+        switch self {
+        case .available(let update), .downloading(let update), .downloaded(let update, _):
+            update
+        case .idle, .checking, .upToDate, .failed:
+            nil
+        }
     }
 }
 

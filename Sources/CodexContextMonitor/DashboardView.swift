@@ -11,11 +11,15 @@ final class DashboardState: ObservableObject {
     @Published var loadingSessionID: String?
     @Published var displayBaselines: [String: ContextBaseline] = [:]
     @Published var compressionStatus: CompressionStatus?
+    @Published var updateState: AppUpdateState = .idle
     var onResetDisplayBaseline: (() -> Void)?
     var onUndoDisplayBaselineReset: (() -> Void)?
     var onSelectSession: ((String) -> Void)?
     var onSelectAutoLatest: (() -> Void)?
     var onCompress: (() -> Void)?
+    var onCheckForUpdates: (() -> Void)?
+    var onInstallUpdate: (() -> Void)?
+    var onOpenUpdateRelease: (() -> Void)?
 
     func resetDisplayBaseline() {
         onResetDisplayBaseline?()
@@ -35,6 +39,18 @@ final class DashboardState: ObservableObject {
 
     func compressCurrentSession() {
         onCompress?()
+    }
+
+    func checkForUpdates() {
+        onCheckForUpdates?()
+    }
+
+    func installUpdate() {
+        onInstallUpdate?()
+    }
+
+    func openUpdateRelease() {
+        onOpenUpdateRelease?()
     }
 }
 
@@ -61,6 +77,7 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 22) {
                         header
                         compressionBanner
+                        updateBanner
                         metricStrip
                         chartSection
                     }
@@ -158,6 +175,117 @@ struct DashboardView: View {
                     .stroke(compressionStatusColor(status).opacity(0.28), lineWidth: 1)
             )
         }
+    }
+
+    @ViewBuilder
+    private var updateBanner: some View {
+        switch state.updateState {
+        case .idle:
+            EmptyView()
+        case .checking:
+            statusBanner(
+                symbol: "arrow.triangle.2.circlepath",
+                color: .blueAccent,
+                title: text.updateCheckingTitle,
+                detail: text.updateCheckingDetail
+            )
+        case .upToDate(let date):
+            statusBanner(
+                symbol: "checkmark.circle.fill",
+                color: .greenAccent,
+                title: text.updateUpToDateTitle,
+                detail: text.updateUpToDateDetail(formattedTime(date))
+            )
+        case .available(let update):
+            statusBanner(
+                symbol: "arrow.down.circle.fill",
+                color: .blueAccent,
+                title: text.updateAvailableTitle(update.version),
+                detail: text.updateAvailableDetail(update.assetName),
+                primaryActionTitle: text.downloadAndOpenUpdate,
+                primaryAction: state.installUpdate,
+                secondaryActionTitle: text.viewRelease,
+                secondaryAction: state.openUpdateRelease
+            )
+        case .downloading(let update):
+            statusBanner(
+                symbol: "arrow.down.circle",
+                color: .blueAccent,
+                title: text.updateDownloadingTitle,
+                detail: text.updateDownloadingDetail(update.assetName)
+            )
+        case .downloaded(let update, let url):
+            statusBanner(
+                symbol: "checkmark.circle.fill",
+                color: .greenAccent,
+                title: text.updateDownloadedTitle(update.version),
+                detail: text.updateDownloadedDetail(url.lastPathComponent),
+                primaryActionTitle: text.openInstaller,
+                primaryAction: state.installUpdate
+            )
+        case .failed(let message):
+            statusBanner(
+                symbol: "exclamationmark.triangle.fill",
+                color: .redAccent,
+                title: text.updateFailedTitle,
+                detail: text.updateFailedDetail(message),
+                primaryActionTitle: text.checkForUpdates,
+                primaryAction: state.checkForUpdates
+            )
+        }
+    }
+
+    private func statusBanner(
+        symbol: String,
+        color: Color,
+        title: String,
+        detail: String,
+        primaryActionTitle: String? = nil,
+        primaryAction: (() -> Void)? = nil,
+        secondaryActionTitle: String? = nil,
+        secondaryAction: (() -> Void)? = nil
+    ) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.primaryText)
+
+                    Text(detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if primaryActionTitle != nil || secondaryActionTitle != nil {
+                    HStack(spacing: 8) {
+                        if let primaryActionTitle, let primaryAction {
+                            Button(primaryActionTitle, action: primaryAction)
+                                .buttonStyle(SecondaryToolbarButtonStyle())
+                        }
+
+                        if let secondaryActionTitle, let secondaryAction {
+                            Button(secondaryActionTitle, action: secondaryAction)
+                                .buttonStyle(SecondaryToolbarButtonStyle())
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(color.opacity(0.28), lineWidth: 1)
+        )
     }
 
     private var metricStrip: some View {

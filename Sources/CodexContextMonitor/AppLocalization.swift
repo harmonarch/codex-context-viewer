@@ -73,6 +73,12 @@ struct AppText {
     var undoDisplayBaselineReset: String { value("Undo Display Baseline Reset", "撤销显示基准重置") }
     var revealSessionFile: String { value("Reveal Session File", "显示会话文件") }
     var quit: String { value("Quit", "退出") }
+    var checkForUpdates: String { value("Check for Updates", "检查更新") }
+    var checkingForUpdates: String { value("Checking for Updates", "正在检查更新") }
+    var downloadingUpdate: String { value("Downloading Update", "正在下载更新") }
+    var downloadAndOpenUpdate: String { value("Download and Open", "下载并打开") }
+    var openInstaller: String { value("Open Installer", "打开安装包") }
+    var viewRelease: String { value("View Release", "查看发布页") }
     var sessions: String { value("Sessions", "会话") }
     var loadingSessions: String { value("Loading sessions", "正在加载会话") }
     var noSessionsFound: String { value("No sessions found", "未找到会话") }
@@ -201,6 +207,37 @@ struct AppText {
     }
     var compressionCopiedTitle: String { value("Summary copied", "摘要已复制") }
     var compressionFailedTitle: String { value("Copy failed", "复制失败") }
+    var updateCheckingTitle: String { value("Checking for updates", "正在检查更新") }
+    var updateCheckingDetail: String {
+        value("The app is checking the latest GitHub Release.", "正在检查最新的 GitHub Release。")
+    }
+    var updateUpToDateTitle: String { value("You are up to date", "已是最新版") }
+    func updateUpToDateDetail(_ time: String) -> String {
+        value("Checked at \(time).", "\(time) 已检查。")
+    }
+    func updateAvailableTitle(_ version: String) -> String {
+        value("Version \(version) is available", "发现 \(version) 版本")
+    }
+    func updateAvailableDetail(_ assetName: String) -> String {
+        value("Download \(assetName), then open the installer.", "下载 \(assetName)，然后打开安装包。")
+    }
+    var updateDownloadingTitle: String { value("Downloading update", "正在下载更新") }
+    func updateDownloadingDetail(_ assetName: String) -> String {
+        value("Saving \(assetName) to Downloads.", "正在把 \(assetName) 存到下载文件夹。")
+    }
+    func updateDownloadedTitle(_ version: String) -> String {
+        value("Version \(version) downloaded", "\(version) 版本已下载")
+    }
+    func updateDownloadedDetail(_ fileName: String) -> String {
+        value("\(fileName) is in Downloads. The installer has been opened.", "\(fileName) 已存到下载文件夹，并已打开安装包。")
+    }
+    var updateFailedTitle: String { value("Update failed", "更新失败") }
+    func updateFailedDetail(_ message: String) -> String {
+        value("Reason: \(translateWarning(message))", "原因：\(translateWarning(message))")
+    }
+    func downloadUpdateVersion(_ version: String) -> String {
+        value("Download \(version)", "下载 \(version)")
+    }
     var compressionDocumentTitle: String { value("# Codex Session Summary", "# Codex 会话摘要") }
     var compressionDocumentIntro: String {
         value(
@@ -380,6 +417,12 @@ struct AppText {
             return "这个会话还没有记录 token 数。"
         case "Selected session is no longer available. Showing latest session.":
             return "选中的会话已不可用，正在显示最新会话。"
+        case "The update server returned an unreadable response.":
+            return "更新服务器返回的内容无法读取。"
+        case "The latest release does not include a DMG installer.":
+            return "最新版本没有包含 DMG 安装包。"
+        case "The installer could not be downloaded.":
+            return "安装包无法下载。"
         default:
             break
         }

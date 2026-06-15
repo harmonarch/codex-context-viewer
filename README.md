@@ -11,6 +11,7 @@ A native macOS app that shows context usage for the latest active Codex user ses
 - Hover details and click-through drilldown for each chart section, including per-skill usage
 - Session picker, top contributors, warnings, Reset Display Baseline, and Undo Display Baseline Reset controls
 - Copy Session Summary, which copies a compact continuation summary to the clipboard
+- Check for Updates, which checks the latest GitHub Release, downloads the DMG installer, and opens it
 - A menu bar summary for quick access
 
 The app reads local Codex files from `~/.codex`. It does not send data anywhere.
@@ -41,8 +42,8 @@ The `Build DMG` workflow can be run manually from GitHub Actions. It also runs
 automatically for version tags:
 
 ```sh
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.0.3
+git push origin v0.0.3
 ```
 
 Tag builds create a GitHub Release and upload the DMG.
@@ -54,6 +55,7 @@ Tag builds create a GitHub Release and upload the DMG.
 - Sub-agent sessions are ignored by default so the menu follows the latest user-owned Codex session.
 - Reset Display Baseline does not delete Codex transcripts, clear a live Codex conversation, or change Codex's actual context. It only changes the baseline used by this monitor when showing post-reset display totals.
 - Copy Session Summary does not rewrite the active Codex conversation. It creates a clipboard summary that can be pasted into a new or existing session.
+- Check for Updates downloads the latest GitHub Release DMG and opens the installer. It does not silently replace the running app.
 - The menu bar percentage and Actual Context Used show the actual Codex context usage. Displayed Since Baseline shows only the amount added after this monitor's display baseline was reset.
 
 ## Actual Usage vs Displayed Since Baseline
