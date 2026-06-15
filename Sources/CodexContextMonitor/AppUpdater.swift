@@ -1,5 +1,13 @@
 import Foundation
 
+struct AppVersion {
+    static let fallback = "0.1.5"
+
+    static var current: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? fallback
+    }
+}
+
 struct AppUpdate: Equatable, Sendable {
     let version: String
     let tagName: String

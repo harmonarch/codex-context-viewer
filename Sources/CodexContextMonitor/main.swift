@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var showsLoadingState = false
     private var compressionStatus: CompressionStatus?
     private var lastSnapshot: ContextSnapshot?
+    private let currentVersion = AppVersion.current
     private var recentSessions: [SessionChoice] = []
     private var loadingSessionID: String?
     private var selectedSessionID: String?
@@ -196,6 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         dashboardState.displayBaselines = displayBaselines
         dashboardState.compressionStatus = compressionStatus
         dashboardState.updateState = updateState
+        dashboardState.currentVersion = currentVersion
     }
 
     private func snapshotForCurrentSelection() -> ContextSnapshot? {
@@ -241,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             menu.addItem(header(text.codexContext))
             menu.addItem(label(text.session, session.name ?? shortID(session.id)))
             menu.addItem(label(text.mode, selectedSessionID == nil ? text.autoLatest : text.pinned))
+            menu.addItem(label(text.currentVersion, currentVersion))
             if let baseline = snapshot?.baseline {
                 menu.addItem(label(text.baselineSet, relativeDate(baseline.baselineSetAt)))
             }
@@ -252,15 +255,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             menu.addItem(header(text.codexContext))
             menu.addItem(label(text.session, loadingSession.name ?? shortID(loadingSession.id)))
             menu.addItem(label(text.mode, selectedSessionID == nil ? text.autoLatest : text.pinned))
+            menu.addItem(label(text.currentVersion, currentVersion))
             if let cwd = loadingSession.cwd {
                 menu.addItem(label(text.workspace, abbreviateHome(cwd)))
             }
             menu.addItem(label(text.status, text.loading))
         } else if isLoading {
             menu.addItem(header(text.codexContext))
+            menu.addItem(label(text.currentVersion, currentVersion))
             menu.addItem(disabled(text.loadingSessionData))
         } else {
             menu.addItem(header(text.codexContext))
+            menu.addItem(label(text.currentVersion, currentVersion))
             menu.addItem(disabled(text.noActiveUserSessionFound))
         }
 
@@ -717,7 +723,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private var currentAppVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.4"
+        currentVersion
     }
 
     private func updateErrorMessage(_ error: Error) -> String {

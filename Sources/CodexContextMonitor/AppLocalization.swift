@@ -74,6 +74,10 @@ struct AppText {
     var revealSessionFile: String { value("Reveal Session File", "显示会话文件") }
     var quit: String { value("Quit", "退出") }
     var checkForUpdates: String { value("Check for Updates", "检查更新") }
+    var currentVersion: String { value("Current Version", "当前版本") }
+    func currentVersionLine(_ version: String) -> String {
+        value("Current version \(version)", "当前版本 \(version)")
+    }
     var checkingForUpdates: String { value("Checking for Updates", "正在检查更新") }
     var downloadingUpdate: String { value("Downloading Update", "正在下载更新") }
     var downloadAndOpenUpdate: String { value("Download and Open", "下载并打开") }

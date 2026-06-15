@@ -12,6 +12,7 @@ final class DashboardState: ObservableObject {
     @Published var displayBaselines: [String: ContextBaseline] = [:]
     @Published var compressionStatus: CompressionStatus?
     @Published var updateState: AppUpdateState = .idle
+    @Published var currentVersion = AppVersion.current
     var onResetDisplayBaseline: (() -> Void)?
     var onUndoDisplayBaselineReset: (() -> Void)?
     var onSelectSession: ((String) -> Void)?
@@ -111,6 +112,11 @@ struct DashboardView: View {
                 }
 
                 Label(workspaceLine, systemImage: "folder")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(Color.secondaryText)
+                    .lineLimit(1)
+
+                Label(text.currentVersionLine(state.currentVersion), systemImage: "tag")
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(Color.secondaryText)
                     .lineLimit(1)
