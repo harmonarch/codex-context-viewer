@@ -88,7 +88,7 @@ public struct ContextBaseline: Equatable, Sendable, Codable {
     public let lastInputTokens: Int
     public let cachedInputTokens: Int
     public let totalRunTokens: Int
-    public let clearedAt: Date
+    public let baselineSetAt: Date
 
     public init(
         sessionID: String,
@@ -96,14 +96,45 @@ public struct ContextBaseline: Equatable, Sendable, Codable {
         lastInputTokens: Int,
         cachedInputTokens: Int,
         totalRunTokens: Int,
-        clearedAt: Date
+        baselineSetAt: Date
     ) {
         self.sessionID = sessionID
         self.lineCount = lineCount
         self.lastInputTokens = lastInputTokens
         self.cachedInputTokens = cachedInputTokens
         self.totalRunTokens = totalRunTokens
-        self.clearedAt = clearedAt
+        self.baselineSetAt = baselineSetAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionID
+        case lineCount
+        case lastInputTokens
+        case cachedInputTokens
+        case totalRunTokens
+        case baselineSetAt
+        case clearedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionID = try container.decode(String.self, forKey: .sessionID)
+        lineCount = try container.decode(Int.self, forKey: .lineCount)
+        lastInputTokens = try container.decode(Int.self, forKey: .lastInputTokens)
+        cachedInputTokens = try container.decode(Int.self, forKey: .cachedInputTokens)
+        totalRunTokens = try container.decode(Int.self, forKey: .totalRunTokens)
+        baselineSetAt = try container.decodeIfPresent(Date.self, forKey: .baselineSetAt)
+            ?? container.decode(Date.self, forKey: .clearedAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sessionID, forKey: .sessionID)
+        try container.encode(lineCount, forKey: .lineCount)
+        try container.encode(lastInputTokens, forKey: .lastInputTokens)
+        try container.encode(cachedInputTokens, forKey: .cachedInputTokens)
+        try container.encode(totalRunTokens, forKey: .totalRunTokens)
+        try container.encode(baselineSetAt, forKey: .baselineSetAt)
     }
 }
 

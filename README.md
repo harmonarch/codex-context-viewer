@@ -9,7 +9,7 @@ A native macOS app that shows context usage for the latest active Codex user ses
 - Last input tokens, cached input tokens, and total run tokens
 - A main dashboard with a donut chart for Instructions, Skills, MCP, Files, Messages, Tool Calls, Tool Output, Reasoning, and Other
 - Hover details and click-through drilldown for each chart section, including per-skill usage
-- Session picker, top contributors, warnings, Reset Display, and Undo Display Reset controls
+- Session picker, top contributors, warnings, Reset Display Baseline, and Undo Display Baseline Reset controls
 - Copy Session Summary, which copies a compact continuation summary to the clipboard
 - A menu bar summary for quick access
 
@@ -52,6 +52,15 @@ Tag builds create a GitHub Release and upload the DMG.
 - The percentage uses Codex's own latest `token_count` event when available.
 - Category details are estimates derived from the local session record, intended to show what is taking space.
 - Sub-agent sessions are ignored by default so the menu follows the latest user-owned Codex session.
-- Reset Display does not delete Codex transcripts or change Codex's internal model context. It resets this monitor's displayed baseline for the selected session.
+- Reset Display Baseline does not delete Codex transcripts, clear a live Codex conversation, or change Codex's actual context. It only changes the baseline used by this monitor when showing post-reset display totals.
 - Copy Session Summary does not rewrite the active Codex conversation. It creates a clipboard summary that can be pasted into a new or existing session.
-- The menu bar percentage shows the actual Codex context usage. Dashboard display totals can show the amount added after the display baseline was reset.
+- The menu bar percentage and Actual Context Used show the actual Codex context usage. Displayed Since Baseline shows only the amount added after this monitor's display baseline was reset.
+
+## Actual Usage vs Displayed Since Baseline
+
+Reset Display Baseline is only a local display control in this monitor.
+
+- Actual Context Used: Codex's current session usage from the latest local token count.
+- Displayed Since Baseline: the amount added after the monitor's display baseline was reset.
+- Notifications use Actual Context Used, so a display baseline reset will not hide a session that is actually over the notification threshold.
+- To truly stop carrying old context, start a new Codex session or use a Codex-supported compaction flow.

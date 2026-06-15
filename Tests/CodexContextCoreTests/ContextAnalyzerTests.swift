@@ -242,14 +242,14 @@ import Testing
     #expect(mcp.items.contains { $0.title == "node_repl.js" })
 }
 
-@Test func analyzerAppliesClearBaselineToConversationBreakdownAndTokenDisplay() throws {
+@Test func analyzerAppliesDisplayBaselineWithoutChangingActualContextUsage() throws {
     let temp = FileManager.default.temporaryDirectory
         .appendingPathComponent("codex-context-monitor-tests-\(UUID().uuidString)")
     let sessions = temp.appendingPathComponent("sessions/2026/06/14")
     try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
 
-    let sessionID = "clear-session"
-    let session = sessions.appendingPathComponent("rollout-clear.jsonl")
+    let sessionID = "display-baseline-session"
+    let session = sessions.appendingPathComponent("rollout-display-baseline.jsonl")
     let beforeMessage: [String: Any] = [
         "timestamp": "2026-06-14T00:00:01.000Z",
         "type": "response_item",
@@ -302,7 +302,7 @@ import Testing
     ]
     .joined(separator: "\n")
     .write(to: session, atomically: true, encoding: .utf8)
-    try #"{"id":"clear-session","thread_name":"Clear","updated_at":"2026-06-14T00:00:05.000000Z"}"#
+    try #"{"id":"display-baseline-session","thread_name":"Display Baseline","updated_at":"2026-06-14T00:00:05.000000Z"}"#
         .write(to: temp.appendingPathComponent("session_index.jsonl"), atomically: true, encoding: .utf8)
 
     let analyzer = ContextAnalyzer(codexHome: temp)
@@ -315,7 +315,7 @@ import Testing
             lastInputTokens: 100,
             cachedInputTokens: 40,
             totalRunTokens: 150,
-            clearedAt: Date(timeIntervalSince1970: 0)
+            baselineSetAt: Date(timeIntervalSince1970: 0)
         )
     )
 
@@ -326,6 +326,23 @@ import Testing
     #expect(snapshot.displayCachedInputTokens == 5)
     #expect(snapshot.displayTotalRunTokens == 60)
     #expect(snapshot.categories.first { $0.kind == .messages }?.items.contains { $0.title == "User" } == true)
+}
+
+@Test func contextBaselineDecodesLegacyClearedAtStorageKey() throws {
+    let data = """
+    {
+      "sessionID": "legacy",
+      "lineCount": 10,
+      "lastInputTokens": 100,
+      "cachedInputTokens": 20,
+      "totalRunTokens": 200,
+      "clearedAt": 0
+    }
+    """.data(using: .utf8)!
+
+    let baseline = try JSONDecoder().decode(ContextBaseline.self, from: data)
+
+    #expect(baseline.baselineSetAt == Date(timeIntervalSinceReferenceDate: 0))
 }
 
 @Test func compressorBuildsContinuationDraftFromCurrentSession() throws {

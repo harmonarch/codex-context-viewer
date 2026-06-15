@@ -9,20 +9,20 @@ final class DashboardState: ObservableObject {
     @Published var isLoading = false
     @Published var selectedSessionID: String?
     @Published var loadingSessionID: String?
-    @Published var clearBaselines: [String: ContextBaseline] = [:]
+    @Published var displayBaselines: [String: ContextBaseline] = [:]
     @Published var compressionStatus: CompressionStatus?
-    var onClear: (() -> Void)?
-    var onUndoClear: (() -> Void)?
+    var onResetDisplayBaseline: (() -> Void)?
+    var onUndoDisplayBaselineReset: (() -> Void)?
     var onSelectSession: ((String) -> Void)?
     var onSelectAutoLatest: (() -> Void)?
     var onCompress: (() -> Void)?
 
-    func clear() {
-        onClear?()
+    func resetDisplayBaseline() {
+        onResetDisplayBaseline?()
     }
 
-    func undoClear() {
-        onUndoClear?()
+    func undoDisplayBaselineReset() {
+        onUndoDisplayBaselineReset?()
     }
 
     func selectSession(_ id: String) {
@@ -109,15 +109,19 @@ struct DashboardView: View {
                 Button {
                     state.compressCurrentSession()
                 } label: {
-                    Label(compressButtonTitle, systemImage: "arrow.down.doc")
+                    Text(compressButtonTitle)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
                 .buttonStyle(PrimaryToolbarButtonStyle())
                 .disabled(state.snapshot?.session == nil || state.compressionStatus == .compressing)
 
                 Button {
-                    state.clear()
+                    state.resetDisplayBaseline()
                 } label: {
-                    Label(text.clearContext, systemImage: "arrow.counterclockwise")
+                    Text(text.resetDisplayBaselineShort)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
                 .buttonStyle(SecondaryToolbarButtonStyle())
                 .disabled(state.snapshot?.session == nil)
@@ -687,7 +691,7 @@ struct DashboardView: View {
             return text.waitingForTokenData
         }
         let detail = text.percentOf(formatPercent(snapshot.displayUsageRatio), formatTokens(snapshot.contextWindow))
-        return snapshot.baseline == nil ? detail : "\(text.sinceClear): \(detail)"
+        return snapshot.baseline == nil ? detail : "\(text.sinceDisplayBaseline): \(detail)"
     }
 
     private var windowDetail: String {

@@ -48,7 +48,6 @@ struct AppText {
     var pinned: String { value("Pinned", "固定") }
     var autoLatest: String { value("Auto latest", "自动最新") }
     var autoLatestTitle: String { value("Auto Latest", "自动最新") }
-    var cleared: String { value("Cleared", "已清除") }
     var baselineSet: String { value("Display baseline set", "已设置显示基准") }
     var workspace: String { value("Workspace", "工作区") }
     var updated: String { value("Updated", "已更新") }
@@ -58,17 +57,20 @@ struct AppText {
     var noActiveUserSessionFound: String { value("No active user session found", "未找到活跃的用户会话") }
     var context: String { value("Context", "上下文") }
     var lastInput: String { value("Last input", "上次输入") }
+    var displayedInput: String { value("Displayed input", "显示输入") }
     var cachedInput: String { value("Cached input", "缓存输入") }
+    var displayedCachedInput: String { value("Displayed cached input", "显示缓存输入") }
     var runTotal: String { value("Run total", "本次总量") }
-    var actualContext: String { value("Actual context", "实际上下文") }
+    var displayedRunTotal: String { value("Displayed run total", "显示本次总量") }
+    var actualContext: String { value("Actual context usage", "实际上下文用量") }
     var loadingBreakdown: String { value("Loading breakdown", "正在加载明细") }
     var noBreakdownAvailableYet: String { value("No breakdown available yet", "暂无明细") }
     var openDashboard: String { value("Open Dashboard", "打开面板") }
     var theme: String { value("Theme", "主题") }
     var lightTheme: String { value("Light", "浅色") }
     var darkTheme: String { value("Dark", "深色") }
-    var clearNow: String { value("Reset Display Baseline", "重置显示基准") }
-    var undoClear: String { value("Undo Display Reset", "撤销显示重置") }
+    var resetDisplayBaseline: String { value("Reset Display Baseline", "重置显示基准") }
+    var undoDisplayBaselineReset: String { value("Undo Display Baseline Reset", "撤销显示基准重置") }
     var revealSessionFile: String { value("Reveal Session File", "显示会话文件") }
     var quit: String { value("Quit", "退出") }
     var sessions: String { value("Sessions", "会话") }
@@ -76,14 +78,13 @@ struct AppText {
     var noSessionsFound: String { value("No sessions found", "未找到会话") }
     var waitingForTokenData: String { value("Waiting for token data", "正在等待 token 资料") }
     var refreshing: String { value("Refreshing", "正在刷新") }
-    var clear: String { value("Reset", "重置") }
-    var clearContext: String { value("Reset Display", "重置显示") }
+    var resetDisplayBaselineShort: String { value("Reset Display Baseline", "重置显示基准") }
     var compressCurrentSession: String { value("Copy Session Summary", "复制会话摘要") }
     var compressingSession: String { value("Copying", "正在复制") }
     var totalContextUsed: String { value("Total Context Used", "已用上下文") }
     var contextWindow: String { value("Context Window", "上下文窗口") }
     var cacheHitRate: String { value("Cache Hit Rate", "缓存命中率") }
-    var sinceClear: String { value("Since Display Reset", "显示重置后") }
+    var sinceDisplayBaseline: String { value("Since Display Baseline", "显示基准后") }
     var hoverOverviewHint: String {
         value(
             "Hover a slice to see details.",
@@ -145,18 +146,17 @@ struct AppText {
     var updating: String { value("Updating", "正在更新") }
     var notUpdated: String { value("Not updated", "尚未更新") }
     var unknownMax: String { value("Unknown max", "未知上限") }
-    var notCleared: String { value("Not cleared", "未清除") }
     var fullSessionView: String { value("Full session view", "完整会话视图") }
     var sinceBaseline: String { value("Since baseline", "基准后") }
-    var displayContextUsed: String { value("Displayed Context Used", "显示用量") }
+    var displayContextUsed: String { value("Displayed Since Baseline", "基准后显示用量") }
     var actualContextUsed: String { value("Actual Context Used", "实际用量") }
     var actualContextDetail: String {
         value("Codex still has this much context in the session.", "Codex 当前会话实际仍占用这么多上下文。")
     }
     var displayResetHint: String {
         value(
-            "Display reset hides earlier local records in this monitor. It does not clear the active Codex conversation.",
-            "显示重置只隐藏监控器里的旧记录，不会清空当前 Codex 对话。"
+            "This is only a monitor display baseline. The active Codex conversation and its actual context are unchanged.",
+            "这只是监控器的显示基准，不会改变当前 Codex 对话和实际上下文。"
         )
     }
     var loadingContextData: String { value("Loading context data", "正在加载上下文资料") }
@@ -164,11 +164,11 @@ struct AppText {
     var usageOver25: String {
         value("Context usage is over 25% of the window.", "上下文用量已超过窗口的 25%。")
     }
-    var contextUsageNotificationTitle: String { value("Codex context usage is over 50%", "Codex 上下文用量已超过 50%") }
+    var contextUsageNotificationTitle: String { value("Actual context usage is over 50%", "实际上下文用量已超过 50%") }
     func contextUsageNotificationBody(_ percent: String) -> String {
         value(
-            "Current session is using \(percent) of the context window. Consider summarizing or starting a new session soon.",
-            "当前会话已使用上下文窗口的 \(percent)。建议尽快整理摘要或开启新会话。"
+            "Current session is using \(percent) of the context window. Display baseline resets do not change this.",
+            "当前会话已使用上下文窗口的 \(percent)。重置显示基准不会改变这个数字。"
         )
     }
     var usageWithinRange: String {
@@ -185,8 +185,8 @@ struct AppText {
     }
     var clearOldContextHint: String {
         value(
-            "Reset the display baseline when older local records are no longer useful in this monitor.",
-            "旧记录不再需要显示时，可以重置监控器的显示基准。"
+            "Reset the display baseline when older local records are no longer useful in this monitor. This does not clear Codex context.",
+            "旧记录不再需要显示时，可以重置监控器的显示基准。这不会清空 Codex 上下文。"
         )
     }
     var readingLocalData: String {

@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private let dashboardState = DashboardState()
     private let text = AppText.current
     private let selectedSessionKey = "selectedSessionID"
-    private let clearBaselinesKey = "clearBaselines"
+    private let displayBaselinesKey = "clearBaselines"
     private let contextUsageNotificationThreshold = 0.50
     private var selectedTheme: AppThemeChoice = .saved
     private var timer: Timer?
@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var recentSessions: [SessionChoice] = []
     private var loadingSessionID: String?
     private var selectedSessionID: String?
-    private var clearBaselines: [String: ContextBaseline] = [:]
+    private var displayBaselines: [String: ContextBaseline] = [:]
     private var contextUsageNotificationHandledSessionIDs: Set<String> = []
     private var contextUsageNotificationPendingSessionIDs: Set<String> = []
     private lazy var relativeDateFormatter: RelativeDateTimeFormatter = {
@@ -39,12 +39,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NSApp.setActivationPolicy(.accessory)
         UNUserNotificationCenter.current().delegate = self
         selectedSessionID = UserDefaults.standard.string(forKey: selectedSessionKey)
-        clearBaselines = loadClearBaselines()
-        dashboardState.onClear = { [weak self] in
-            self?.clearNow()
+        displayBaselines = loadDisplayBaselines()
+        dashboardState.onResetDisplayBaseline = { [weak self] in
+            self?.resetDisplayBaselineNow()
         }
-        dashboardState.onUndoClear = { [weak self] in
-            self?.undoClear()
+        dashboardState.onUndoDisplayBaselineReset = { [weak self] in
+            self?.undoDisplayBaselineReset()
         }
         dashboardState.onSelectSession = { [weak self] id in
             self?.selectSession(id: id)
@@ -82,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         refreshGeneration += 1
         let generation = refreshGeneration
         let selectedSessionID = selectedSessionID
-        let clearBaselines = clearBaselines
+        let displayBaselines = displayBaselines
         let cachedSessions = recentSessions
 
         refreshInProgress = true
@@ -97,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         refreshTask = Task.detached(priority: priority) {
             let result = RefreshLoader.load(
                 selectedSessionID: selectedSessionID,
-                clearBaselines: clearBaselines,
+                displayBaselines: displayBaselines,
                 cachedSessions: cachedSessions,
                 menuSessionLimit: 15
             )
@@ -149,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let body = text.contextUsageNotificationBody(formatPercent(snapshot.usageRatio))
 
         Task { [weak self] in
-            _ = await Self.submitContextUsageNotification(
+            let didSubmitNotification = await Self.submitContextUsageNotification(
                 title: title,
                 body: body,
                 sessionID: sessionID
@@ -159,7 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 return
             }
             if contextUsageNotificationPendingSessionIDs.remove(sessionID) != nil {
-                contextUsageNotificationHandledSessionIDs.insert(sessionID)
+                if didSubmitNotification {
+                    contextUsageNotificationHandledSessionIDs.insert(sessionID)
+                }
             }
         }
     }
@@ -179,7 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         dashboardState.isLoading = isLoading
         dashboardState.selectedSessionID = selectedSessionID
         dashboardState.loadingSessionID = loadingSessionID
-        dashboardState.clearBaselines = clearBaselines
+        dashboardState.displayBaselines = displayBaselines
         dashboardState.compressionStatus = compressionStatus
     }
 
@@ -227,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             menu.addItem(label(text.session, session.name ?? shortID(session.id)))
             menu.addItem(label(text.mode, selectedSessionID == nil ? text.autoLatest : text.pinned))
             if let baseline = snapshot?.baseline {
-                menu.addItem(label(text.baselineSet, relativeDate(baseline.clearedAt)))
+                menu.addItem(label(text.baselineSet, relativeDate(baseline.baselineSetAt)))
             }
             if let cwd = session.cwd {
                 menu.addItem(label(text.workspace, abbreviateHome(cwd)))
@@ -251,10 +253,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         menu.addItem(.separator())
         if let snapshot {
-            menu.addItem(label(text.context, contextLine(snapshot)))
-            menu.addItem(label(text.lastInput, text.tokenCount(formatTokens(snapshot.displayInputTokens))))
-            menu.addItem(label(text.cachedInput, text.tokenCount(formatTokens(snapshot.displayCachedInputTokens))))
-            menu.addItem(label(text.runTotal, text.tokenCount(formatTokens(snapshot.displayTotalRunTokens))))
+            menu.addItem(label(displayContextTitle(snapshot), contextLine(snapshot)))
+            menu.addItem(label(displayInputTitle(snapshot), text.tokenCount(formatTokens(snapshot.displayInputTokens))))
+            menu.addItem(label(displayCachedInputTitle(snapshot), text.tokenCount(formatTokens(snapshot.displayCachedInputTokens))))
+            menu.addItem(label(displayRunTotalTitle(snapshot), text.tokenCount(formatTokens(snapshot.displayTotalRunTokens))))
             if snapshot.baseline != nil {
                 menu.addItem(label(text.actualContext, text.percentOf(formatPercent(snapshot.usageRatio), formatTokens(snapshot.contextWindow))))
                 menu.addItem(disabled(text.displayResetHint))
@@ -294,15 +296,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             compressItem.isEnabled = compressionStatus != .compressing
             menu.addItem(compressItem)
 
-            let clearItem = NSMenuItem(title: text.clearNow, action: #selector(clearNow), keyEquivalent: "")
-            clearItem.target = self
-            menu.addItem(clearItem)
+            let resetDisplayBaselineItem = NSMenuItem(title: text.resetDisplayBaseline, action: #selector(resetDisplayBaselineNow), keyEquivalent: "")
+            resetDisplayBaselineItem.target = self
+            menu.addItem(resetDisplayBaselineItem)
         }
 
-        if let sessionID = snapshot?.session?.id, clearBaselines[sessionID] != nil {
-            let undoClearItem = NSMenuItem(title: text.undoClear, action: #selector(undoClear), keyEquivalent: "")
-            undoClearItem.target = self
-            menu.addItem(undoClearItem)
+        if let sessionID = snapshot?.session?.id, displayBaselines[sessionID] != nil {
+            let undoDisplayBaselineResetItem = NSMenuItem(title: text.undoDisplayBaselineReset, action: #selector(undoDisplayBaselineReset), keyEquivalent: "")
+            undoDisplayBaselineResetItem.target = self
+            menu.addItem(undoDisplayBaselineResetItem)
         }
 
         if let path = snapshot?.session?.path.path {
@@ -404,7 +406,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return text.waitingForTokenData
         }
         let usage = text.percentOf(formatPercent(snapshot.displayUsageRatio), formatTokens(snapshot.contextWindow))
-        return snapshot.baseline == nil ? usage : "\(text.sinceClear): \(usage)"
+        return snapshot.baseline == nil ? usage : "\(text.sinceDisplayBaseline): \(usage)"
+    }
+
+    private func displayContextTitle(_ snapshot: ContextSnapshot) -> String {
+        snapshot.baseline == nil ? text.context : text.displayContextUsed
+    }
+
+    private func displayInputTitle(_ snapshot: ContextSnapshot) -> String {
+        snapshot.baseline == nil ? text.lastInput : text.displayedInput
+    }
+
+    private func displayCachedInputTitle(_ snapshot: ContextSnapshot) -> String {
+        snapshot.baseline == nil ? text.cachedInput : text.displayedCachedInput
+    }
+
+    private func displayRunTotalTitle(_ snapshot: ContextSnapshot) -> String {
+        snapshot.baseline == nil ? text.runTotal : text.displayedRunTotal
     }
 
     private func header(_ title: String) -> NSMenuItem {
@@ -464,19 +482,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return path
     }
 
-    private func loadClearBaselines() -> [String: ContextBaseline] {
-        guard let data = UserDefaults.standard.data(forKey: clearBaselinesKey),
+    private func loadDisplayBaselines() -> [String: ContextBaseline] {
+        guard let data = UserDefaults.standard.data(forKey: displayBaselinesKey),
               let baselines = try? JSONDecoder().decode([String: ContextBaseline].self, from: data) else {
             return [:]
         }
         return baselines
     }
 
-    private func saveClearBaselines() {
-        guard let data = try? JSONEncoder().encode(clearBaselines) else {
+    private func saveDisplayBaselines() {
+        guard let data = try? JSONEncoder().encode(displayBaselines) else {
             return
         }
-        UserDefaults.standard.set(data, forKey: clearBaselinesKey)
+        UserDefaults.standard.set(data, forKey: displayBaselinesKey)
     }
 
     private func lineCount(for url: URL) -> Int {
@@ -490,30 +508,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         refresh(showLoading: false, priority: .utility)
     }
 
-    @objc private func clearNow() {
+    @objc private func resetDisplayBaselineNow() {
         guard let snapshot = lastSnapshot,
               let session = snapshot.session else {
             return
         }
 
-        clearBaselines[session.id] = ContextBaseline(
+        displayBaselines[session.id] = ContextBaseline(
             sessionID: session.id,
             lineCount: lineCount(for: session.path),
             lastInputTokens: snapshot.lastInputTokens,
             cachedInputTokens: snapshot.cachedInputTokens,
             totalRunTokens: snapshot.totalRunTokens,
-            clearedAt: Date()
+            baselineSetAt: Date()
         )
-        saveClearBaselines()
+        saveDisplayBaselines()
         refresh(showLoading: true, priority: .userInitiated)
     }
 
-    @objc private func undoClear() {
+    @objc private func undoDisplayBaselineReset() {
         guard let sessionID = lastSnapshot?.session?.id else {
             return
         }
-        clearBaselines.removeValue(forKey: sessionID)
-        saveClearBaselines()
+        displayBaselines.removeValue(forKey: sessionID)
+        saveDisplayBaselines()
         refresh(showLoading: true, priority: .userInitiated)
     }
 
@@ -708,7 +726,7 @@ private struct RefreshResult: Sendable {
 private enum RefreshLoader {
     static func load(
         selectedSessionID: String?,
-        clearBaselines: [String: ContextBaseline],
+        displayBaselines: [String: ContextBaseline],
         cachedSessions: [SessionChoice],
         menuSessionLimit: Int
     ) -> RefreshResult {
@@ -729,13 +747,13 @@ private enum RefreshLoader {
             do {
                 snapshot = try analyzer.snapshot(
                     for: session,
-                    baseline: clearBaselines[session.id]
+                    baseline: displayBaselines[session.id]
                 )
             } catch {
-                snapshot = analyzer.snapshot(sessionID: selectedSessionID, baseline: selectedSessionID.flatMap { clearBaselines[$0] })
+                snapshot = analyzer.snapshot(sessionID: selectedSessionID, baseline: selectedSessionID.flatMap { displayBaselines[$0] })
             }
         } else {
-            snapshot = analyzer.snapshot(sessionID: selectedSessionID, baseline: selectedSessionID.flatMap { clearBaselines[$0] })
+            snapshot = analyzer.snapshot(sessionID: selectedSessionID, baseline: selectedSessionID.flatMap { displayBaselines[$0] })
         }
 
         return RefreshResult(snapshot: snapshot, recentSessions: menuSessions)
