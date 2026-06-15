@@ -20,6 +20,7 @@ enum AppUpdateState: Equatable {
 
 enum AppUpdateError: LocalizedError {
     case invalidResponse
+    case latestTagNotFound
     case noDMGAsset
     case downloadFailed
 
@@ -27,6 +28,8 @@ enum AppUpdateError: LocalizedError {
         switch self {
         case .invalidResponse:
             "The update server returned an unreadable response."
+        case .latestTagNotFound:
+            "The latest version could not be found."
         case .noDMGAsset:
             "The latest release does not include a DMG installer."
         case .downloadFailed:
@@ -36,7 +39,10 @@ enum AppUpdateError: LocalizedError {
 }
 
 struct AppUpdater {
-    private let latestReleaseURL = URL(string: "https://api.github.com/repos/harmonarch/codex-context-viewer/releases/latest")!
+    private static let owner = "harmonarch"
+    private static let repository = "codex-context-viewer"
+    private static let assetName = "Codex-Context-Monitor.dmg"
+    private let latestReleaseURL = URL(string: "https://github.com/\(Self.owner)/\(Self.repository)/releases/latest")!
     private let fileManager: FileManager
     private let session: URLSession
 
@@ -47,32 +53,33 @@ struct AppUpdater {
 
     func latestUpdate(currentVersion: String) async throws -> AppUpdate? {
         var request = URLRequest(url: latestReleaseURL)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("text/html", forHTTPHeaderField: "Accept")
         request.setValue("CodexContextMonitor", forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await session.data(for: request)
+        let (_, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse,
               (200..<300).contains(httpResponse.statusCode) else {
             throw AppUpdateError.invalidResponse
         }
 
-        let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
-        let version = Self.normalizedVersion(release.tagName)
+        guard let tagName = Self.releaseTag(from: httpResponse.url) else {
+            throw AppUpdateError.latestTagNotFound
+        }
+
+        let version = Self.normalizedVersion(tagName)
         guard Self.compareVersions(version, currentVersion) == .orderedDescending else {
             return nil
         }
 
-        guard let asset = release.assets.first(where: { $0.name.localizedCaseInsensitiveContains("Codex-Context-Monitor") && $0.name.lowercased().hasSuffix(".dmg") })
-                ?? release.assets.first(where: { $0.name.lowercased().hasSuffix(".dmg") }) else {
-            throw AppUpdateError.noDMGAsset
-        }
+        let releaseURL = Self.releaseURL(tagName: tagName)
+        let assetDownloadURL = Self.assetDownloadURL(tagName: tagName)
 
         return AppUpdate(
             version: version,
-            tagName: release.tagName,
-            releaseURL: release.htmlURL,
-            assetName: asset.name,
-            assetDownloadURL: asset.browserDownloadURL
+            tagName: tagName,
+            releaseURL: releaseURL,
+            assetName: Self.assetName,
+            assetDownloadURL: assetDownloadURL
         )
     }
 
@@ -93,6 +100,28 @@ struct AppUpdater {
     private func downloadsDirectory() -> URL {
         fileManager.urls(for: .downloadsDirectory, in: .userDomainMask).first
             ?? fileManager.homeDirectoryForCurrentUser
+    }
+
+    static func releaseTag(from url: URL?) -> String? {
+        guard let url else {
+            return nil
+        }
+
+        let pathParts = url.path.split(separator: "/").map(String.init)
+        guard let tagIndex = pathParts.firstIndex(of: "tag"),
+              tagIndex + 1 < pathParts.count else {
+            return nil
+        }
+
+        return pathParts[tagIndex + 1]
+    }
+
+    static func releaseURL(tagName: String) -> URL {
+        URL(string: "https://github.com/\(owner)/\(repository)/releases/tag/\(tagName)")!
+    }
+
+    static func assetDownloadURL(tagName: String) -> URL {
+        URL(string: "https://github.com/\(owner)/\(repository)/releases/download/\(tagName)/\(assetName)")!
     }
 
     static func installerFileName(for update: AppUpdate) -> String {
@@ -134,27 +163,5 @@ struct AppUpdater {
 
     private static func versionPart(_ value: Substring) -> Int {
         Int(value.prefix { $0.isNumber }) ?? 0
-    }
-}
-
-private struct GitHubRelease: Decodable {
-    let tagName: String
-    let htmlURL: URL
-    let assets: [GitHubReleaseAsset]
-
-    enum CodingKeys: String, CodingKey {
-        case tagName = "tag_name"
-        case htmlURL = "html_url"
-        case assets
-    }
-}
-
-private struct GitHubReleaseAsset: Decodable {
-    let name: String
-    let browserDownloadURL: URL
-
-    enum CodingKeys: String, CodingKey {
-        case name
-        case browserDownloadURL = "browser_download_url"
     }
 }

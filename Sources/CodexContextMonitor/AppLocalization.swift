@@ -419,6 +419,8 @@ struct AppText {
             return "选中的会话已不可用，正在显示最新会话。"
         case "The update server returned an unreadable response.":
             return "更新服务器返回的内容无法读取。"
+        case "The latest version could not be found.":
+            return "无法找到最新版本。"
         case "The latest release does not include a DMG installer.":
             return "最新版本没有包含 DMG 安装包。"
         case "The installer could not be downloaded.":

@@ -31,7 +31,7 @@ let package = Package(
         ),
         .testTarget(
             name: "CodexContextCoreTests",
-            dependencies: ["CodexContextCore"]
+            dependencies: ["CodexContextCore", "CodexContextMonitor"]
         )
     ]
 )
