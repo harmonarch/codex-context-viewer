@@ -164,11 +164,11 @@ struct AppText {
     var usageOver25: String {
         value("Context usage is over 25% of the window.", "上下文用量已超过窗口的 25%。")
     }
-    var contextUsageNotificationTitle: String { value("Context usage is over 50%", "上下文用量已超过 50%") }
+    var contextUsageNotificationTitle: String { value("Codex context usage is over 50%", "Codex 上下文用量已超过 50%") }
     func contextUsageNotificationBody(_ percent: String) -> String {
         value(
-            "Current session is using \(percent) of the context window.",
-            "当前会话已使用上下文窗口的 \(percent)。"
+            "Current session is using \(percent) of the context window. Consider summarizing or starting a new session soon.",
+            "当前会话已使用上下文窗口的 \(percent)。建议尽快整理摘要或开启新会话。"
         )
     }
     var usageWithinRange: String {

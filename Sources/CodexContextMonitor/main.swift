@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         statusItem.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: text.codexContext)
         statusItem.button?.imagePosition = .imageLeading
         statusItem.button?.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
-        statusItem.button?.title = "Codex ..."
+        updateStatusItemTitle("Codex ...", isWarning: false)
         updateMenu(isLoading: true)
         showDashboard()
 
@@ -123,7 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         lastSnapshot = result.snapshot
         recentSessions = result.recentSessions
         updateContextUsageNotification(for: result.snapshot)
-        statusItem.button?.title = statusTitle(result.snapshot)
+        updateStatusItem(for: result.snapshot)
         updateMenu(isLoading: false)
         syncDashboardState(isLoading: false)
     }
@@ -200,6 +200,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return "Codex --"
         }
         return "Codex \(formatPercent(snapshot.usageRatio))"
+    }
+
+    private func updateStatusItem(for snapshot: ContextSnapshot) {
+        let isWarning = snapshot.contextWindow > 0 && snapshot.usageRatio >= contextUsageNotificationThreshold
+        updateStatusItemTitle(statusTitle(snapshot), isWarning: isWarning)
+    }
+
+    private func updateStatusItemTitle(_ title: String, isWarning: Bool) {
+        let color: NSColor = isWarning ? .systemRed : .labelColor
+        statusItem.button?.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium),
+                .foregroundColor: color
+            ]
+        )
     }
 
     private func buildMenu(snapshot: ContextSnapshot?, sessions: [SessionChoice], isLoading: Bool) -> NSMenu {
