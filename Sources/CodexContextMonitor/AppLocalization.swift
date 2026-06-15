@@ -64,6 +64,9 @@ struct AppText {
     var loadingBreakdown: String { value("Loading breakdown", "正在加载明细") }
     var noBreakdownAvailableYet: String { value("No breakdown available yet", "暂无明细") }
     var openDashboard: String { value("Open Dashboard", "打开面板") }
+    var theme: String { value("Theme", "主题") }
+    var lightTheme: String { value("Light", "浅色") }
+    var darkTheme: String { value("Dark", "深色") }
     var clearNow: String { value("Reset Display Baseline", "重置显示基准") }
     var undoClear: String { value("Undo Display Reset", "撤销显示重置") }
     var revealSessionFile: String { value("Reveal Session File", "显示会话文件") }

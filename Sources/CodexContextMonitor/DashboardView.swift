@@ -11,7 +11,6 @@ final class DashboardState: ObservableObject {
     @Published var loadingSessionID: String?
     @Published var clearBaselines: [String: ContextBaseline] = [:]
     @Published var compressionStatus: CompressionStatus?
-
     var onClear: (() -> Void)?
     var onUndoClear: (() -> Void)?
     var onSelectSession: ((String) -> Void)?
@@ -1163,30 +1162,6 @@ private struct IconButtonStyle: ButtonStyle {
                     .stroke(Color.hairline, lineWidth: 1)
             )
     }
-}
-
-private extension Color {
-    static let dashboardBackground = Color(red: 0.966, green: 0.973, blue: 0.984)
-    static let railBackground = Color(red: 0.949, green: 0.960, blue: 0.976)
-    static let panelBackground = Color(red: 0.996, green: 0.997, blue: 1.000)
-    static let primaryText = Color(red: 0.070, green: 0.090, blue: 0.140)
-    static let secondaryText = Color(red: 0.365, green: 0.398, blue: 0.486)
-    static let tertiaryText = Color(red: 0.525, green: 0.557, blue: 0.635)
-    static let hairline = Color(red: 0.832, green: 0.854, blue: 0.890)
-    static let blueAccent = Color(red: 0.137, green: 0.502, blue: 0.956)
-    static let blueSoft = Color(red: 0.892, green: 0.936, blue: 1.000)
-    static let violetAccent = Color(red: 0.575, green: 0.330, blue: 0.890)
-    static let purpleAccent = Color(red: 0.640, green: 0.395, blue: 0.910)
-    static let greenAccent = Color(red: 0.275, green: 0.705, blue: 0.382)
-    static let greenText = Color(red: 0.115, green: 0.485, blue: 0.230)
-    static let greenSoft = Color(red: 0.866, green: 0.965, blue: 0.890)
-    static let orangeAccent = Color(red: 0.955, green: 0.565, blue: 0.125)
-    static let coralAccent = Color(red: 0.940, green: 0.310, blue: 0.282)
-    static let tealAccent = Color(red: 0.140, green: 0.720, blue: 0.760)
-    static let steelAccent = Color(red: 0.435, green: 0.592, blue: 0.820)
-    static let amberAccent = Color(red: 0.920, green: 0.665, blue: 0.110)
-    static let grayAccent = Color(red: 0.585, green: 0.625, blue: 0.702)
-    static let redAccent = Color(red: 0.910, green: 0.130, blue: 0.170)
 }
 
 private func formatPercent(_ value: Double) -> String {
