@@ -8,6 +8,7 @@ APP_DIR="$ROOT/build/$APP_NAME.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
+ICON_NAME="CodexContextMonitor.icns"
 
 cd "$ROOT"
 if [[ "${UNIVERSAL:-0}" == "1" ]]; then
@@ -34,6 +35,7 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS" "$RESOURCES"
 cp "$EXECUTABLE" "$MACOS/Codex Context Monitor"
 cp -R "$ROOT/Sources/CodexContextMonitor/Resources/." "$RESOURCES/"
+cp "$ROOT/assets/$ICON_NAME" "$RESOURCES/$ICON_NAME"
 
 cat > "$CONTENTS/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -48,10 +50,12 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <string>Codex Context Monitor</string>
   <key>CFBundleDisplayName</key>
   <string>Codex Context Monitor</string>
+  <key>CFBundleIconFile</key>
+  <string>CodexContextMonitor</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>0.1.1</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>

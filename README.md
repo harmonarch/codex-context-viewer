@@ -41,8 +41,8 @@ The `Build DMG` workflow can be run manually from GitHub Actions. It also runs
 automatically for version tags:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 Tag builds create a GitHub Release and upload the DMG.
