@@ -12,11 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private let selectedSessionKey = "selectedSessionID"
     private let displayBaselinesKey = "clearBaselines"
     private let contextUsageNotificationThreshold = 0.50
+    private let toCodexRefreshInterval: TimeInterval = 60
+    private let toCodexCredentialStore = ToCodexCredentialStore()
     private var selectedTheme: AppThemeChoice = .saved
     private var timer: Timer?
     private var refreshTask: Task<Void, Never>?
     private var compressionTask: Task<Void, Never>?
     private var updateTask: Task<Void, Never>?
+    private var toCodexUsageTask: Task<Void, Never>?
     private var dashboardWindow: NSWindow?
     private var refreshGeneration = 0
     private var refreshInProgress = false
@@ -29,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var selectedSessionID: String?
     private var displayBaselines: [String: ContextBaseline] = [:]
     private var updateState: AppUpdateState = .idle
+    private var toCodexUsageState: ToCodexUsageState = .notConfigured
+    private var lastToCodexUsageRefreshAt: Date?
     private var contextUsageNotificationHandledSessionIDs: Set<String> = []
     private var contextUsageNotificationPendingSessionIDs: Set<String> = []
     private lazy var relativeDateFormatter: RelativeDateTimeFormatter = {
@@ -40,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        installApplicationMenu()
         UNUserNotificationCenter.current().delegate = self
         selectedSessionID = UserDefaults.standard.string(forKey: selectedSessionKey)
         displayBaselines = loadDisplayBaselines()
@@ -67,6 +73,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         dashboardState.onOpenUpdateRelease = { [weak self] in
             self?.openUpdateRelease()
         }
+        dashboardState.onRefreshToCodexUsage = { [weak self] in
+            self?.refreshToCodexUsage(showLoading: true)
+        }
+        dashboardState.onConfigureToCodexToken = { [weak self] in
+            self?.configureToCodexToken()
+        }
+        dashboardState.onClearToCodexToken = { [weak self] in
+            self?.clearToCodexToken()
+        }
+        toCodexUsageState = toCodexCredentialStore.loadCredentials().hasUsableToken ? .loading : .notConfigured
         applyThemeToWindow()
 
         statusItem.button?.image = NSImage(systemSymbolName: "gauge.with.dots.needle.50percent", accessibilityDescription: text.codexContext)
@@ -77,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         showDashboard()
 
         refresh(showLoading: true, priority: .userInitiated)
+        refreshToCodexUsage(showLoading: true)
         checkForUpdates(showUpToDate: false, showFailure: false)
         timer = Timer.scheduledTimer(
             timeInterval: 5,
@@ -198,6 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         dashboardState.compressionStatus = compressionStatus
         dashboardState.updateState = updateState
         dashboardState.currentVersion = currentVersion
+        dashboardState.toCodexUsageState = toCodexUsageState
     }
 
     private func snapshotForCurrentSelection() -> ContextSnapshot? {
@@ -285,6 +303,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         menu.addItem(.separator())
+        appendToCodexUsageItems(to: menu)
+
+        menu.addItem(.separator())
         menu.addItem(sessionPickerItem(currentSessionID: snapshot?.session?.id, sessions: sessions, isLoading: isLoading))
 
         if let snapshot, !snapshot.warnings.isEmpty {
@@ -337,6 +358,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         menu.addItem(NSMenuItem(title: text.quit, action: #selector(quit), keyEquivalent: "q"))
         menu.items.last?.target = self
         return menu
+    }
+
+    private func appendToCodexUsageItems(to menu: NSMenu) {
+        menu.addItem(header(text.toCodexUsage))
+
+        switch toCodexUsageState {
+        case .notConfigured:
+            menu.addItem(disabled(text.toCodexNotConfigured))
+            menu.addItem(toCodexConfigureItem())
+        case .loading:
+            menu.addItem(disabled(text.loading))
+        case .failed(let message):
+            menu.addItem(disabled(text.toCodexLoadFailed(usageErrorMessage(message))))
+            menu.addItem(toCodexRefreshItem())
+            menu.addItem(toCodexConfigureItem())
+        case .loaded(let snapshot):
+            if snapshot.hasSubscriptions {
+                menu.addItem(label(text.dailyUsage, toCodexPeriodLine(snapshot.total(for: .daily))))
+                menu.addItem(label(text.weeklyUsage, toCodexPeriodLine(snapshot.total(for: .weekly))))
+                menu.addItem(label(text.monthlyUsage, toCodexPeriodLine(snapshot.total(for: .monthly))))
+                menu.addItem(label(text.updated, relativeDate(snapshot.generatedAt)))
+            } else {
+                menu.addItem(disabled(text.toCodexNoSubscriptions))
+            }
+            menu.addItem(toCodexRefreshItem())
+            menu.addItem(toCodexConfigureItem())
+        }
+
+        if toCodexCredentialStore.loadCredentials().hasUsableToken {
+            menu.addItem(toCodexClearTokenItem())
+        }
+    }
+
+    private func toCodexRefreshItem() -> NSMenuItem {
+        let item = NSMenuItem(title: text.refreshToCodexUsage, action: #selector(refreshToCodexUsageFromMenu), keyEquivalent: "")
+        item.target = self
+        item.isEnabled = toCodexUsageState != .loading
+        return item
+    }
+
+    private func toCodexConfigureItem() -> NSMenuItem {
+        let item = NSMenuItem(title: text.configureToCodexToken, action: #selector(configureToCodexToken), keyEquivalent: "")
+        item.target = self
+        return item
+    }
+
+    private func toCodexClearTokenItem() -> NSMenuItem {
+        let item = NSMenuItem(title: text.clearToCodexToken, action: #selector(clearToCodexToken), keyEquivalent: "")
+        item.target = self
+        return item
     }
 
     private func themePickerItem() -> NSMenuItem {
@@ -516,6 +587,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return "\(value)"
     }
 
+    private func formatUSD(_ value: Double) -> String {
+        if value >= 100 {
+            return String(format: "$%.0f", value)
+        }
+        return String(format: "$%.2f", value)
+    }
+
+    private func toCodexPeriodLine(_ period: ToCodexUsagePeriod) -> String {
+        let usage: String
+        if let limitUSD = period.limitUSD {
+            usage = "\(formatUSD(period.usedUSD)) / \(formatUSD(limitUSD))  \(formatPercent(period.ratio ?? 0))"
+        } else {
+            usage = text.toCodexUnlimitedUsage(formatUSD(period.usedUSD))
+        }
+        return "\(usage)  \(toCodexResetLine(period))"
+    }
+
+    private func toCodexResetLine(_ period: ToCodexUsagePeriod) -> String {
+        guard let resetAt = period.resetAt,
+              resetAt > Date() else {
+            return text.toCodexResetUnknown
+        }
+        return text.toCodexResetsIn(compactDuration(until: resetAt))
+    }
+
+    private func compactDuration(until date: Date) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(Date())))
+        let totalMinutes = max(1, Int(ceil(Double(seconds) / 60)))
+        let days = totalMinutes / (24 * 60)
+        let hours = (totalMinutes % (24 * 60)) / 60
+        let minutes = totalMinutes % 60
+        return text.compactDuration(days: days, hours: hours, minutes: minutes)
+    }
+
+    private func usageErrorMessage(_ message: String) -> String {
+        text.translateWarning(message)
+    }
+
     private func relativeDate(_ date: Date) -> String {
         relativeDateFormatter.localizedString(for: date, relativeTo: Date())
     }
@@ -561,6 +670,166 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc private func refreshFromTimer() {
         refresh(showLoading: false, priority: .utility)
+        refreshToCodexUsageIfNeeded()
+    }
+
+    private func refreshToCodexUsageIfNeeded() {
+        guard toCodexCredentialStore.loadCredentials().hasUsableToken else {
+            if toCodexUsageState != .notConfigured {
+                toCodexUsageState = .notConfigured
+                updateMenu(isLoading: showsLoadingState || refreshInProgress)
+                syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+            }
+            return
+        }
+
+        guard toCodexUsageState != .loading else {
+            return
+        }
+
+        if let lastToCodexUsageRefreshAt,
+           Date().timeIntervalSince(lastToCodexUsageRefreshAt) < toCodexRefreshInterval {
+            return
+        }
+
+        refreshToCodexUsage(showLoading: false)
+    }
+
+    @objc private func refreshToCodexUsageFromMenu() {
+        refreshToCodexUsage(showLoading: true)
+    }
+
+    private func refreshToCodexUsage(showLoading: Bool) {
+        let credentials = toCodexCredentialStore.loadCredentials()
+        guard credentials.hasUsableToken else {
+            toCodexUsageTask?.cancel()
+            toCodexUsageState = .notConfigured
+            updateMenu(isLoading: showsLoadingState || refreshInProgress)
+            syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+            return
+        }
+
+        if showLoading || toCodexUsageState == .notConfigured {
+            toCodexUsageState = .loading
+            updateMenu(isLoading: showsLoadingState || refreshInProgress)
+            syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+        }
+
+        toCodexUsageTask?.cancel()
+        toCodexUsageTask = Task.detached(priority: showLoading ? .userInitiated : .utility) {
+            let result: Result<ToCodexUsageFetchResult, Error>
+            do {
+                result = .success(try await ToCodexUsageClient().fetchSnapshot(credentials: credentials))
+            } catch {
+                result = .failure(error)
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await MainActor.run {
+                self.applyToCodexUsageResult(result)
+            }
+        }
+    }
+
+    private func applyToCodexUsageResult(_ result: Result<ToCodexUsageFetchResult, Error>) {
+        lastToCodexUsageRefreshAt = Date()
+        switch result {
+        case .success(let fetchResult):
+            try? toCodexCredentialStore.saveCredentials(fetchResult.credentials)
+            toCodexUsageState = .loaded(fetchResult.snapshot)
+        case .failure(let error):
+            let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            toCodexUsageState = .failed(message)
+        }
+        updateMenu(isLoading: showsLoadingState || refreshInProgress)
+        syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+    }
+
+    @objc private func configureToCodexToken() {
+        let alert = NSAlert()
+        alert.messageText = text.configureToCodexToken
+        alert.informativeText = text.configureToCodexTokenHelp
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: text.save)
+        alert.addButton(withTitle: text.cancel)
+
+        let fieldWidth: CGFloat = 460
+        let container = NSStackView(frame: NSRect(x: 0, y: 0, width: fieldWidth, height: 58))
+        container.orientation = .vertical
+        container.spacing = 8
+        container.alignment = .leading
+
+        let emailField = NSTextField(frame: NSRect(x: 0, y: 0, width: fieldWidth, height: 24))
+        emailField.placeholderString = text.toCodexEmail
+        emailField.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+
+        let passwordField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: fieldWidth, height: 24))
+        passwordField.placeholderString = text.toCodexPassword
+        passwordField.widthAnchor.constraint(equalToConstant: fieldWidth).isActive = true
+
+        container.addArrangedSubview(emailField)
+        container.addArrangedSubview(passwordField)
+        alert.accessoryView = container
+        alert.window.initialFirstResponder = emailField
+
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else {
+            return
+        }
+
+        let email = emailField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let password = passwordField.stringValue
+        guard !email.isEmpty, !password.isEmpty else {
+            toCodexUsageState = .notConfigured
+            updateMenu(isLoading: showsLoadingState || refreshInProgress)
+            syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+            return
+        }
+
+        toCodexUsageState = .loading
+        updateMenu(isLoading: showsLoadingState || refreshInProgress)
+        syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+
+        toCodexUsageTask?.cancel()
+        toCodexUsageTask = Task.detached(priority: .userInitiated) {
+            let result: Result<ToCodexUsageFetchResult, Error>
+            do {
+                let client = ToCodexUsageClient()
+                let credentials = try await client.login(email: email, password: password)
+                result = .success(try await client.fetchSnapshot(credentials: credentials))
+            } catch {
+                result = .failure(error)
+            }
+
+            guard !Task.isCancelled else {
+                return
+            }
+
+            await MainActor.run {
+                self.applyToCodexUsageResult(result)
+            }
+        }
+    }
+
+    @objc private func clearToCodexToken() {
+        do {
+            try toCodexCredentialStore.deleteToken()
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            toCodexUsageState = .failed(message)
+            updateMenu(isLoading: showsLoadingState || refreshInProgress)
+            syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
+            return
+        }
+
+        toCodexUsageTask?.cancel()
+        lastToCodexUsageRefreshAt = nil
+        toCodexUsageState = .notConfigured
+        updateMenu(isLoading: showsLoadingState || refreshInProgress)
+        syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
     }
 
     @objc private func resetDisplayBaselineNow() {
@@ -795,6 +1064,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func applyThemeToWindow() {
         dashboardWindow?.appearance = selectedTheme.windowAppearance
+    }
+
+    private func installApplicationMenu() {
+        let mainMenu = NSMenu()
+
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: text.quit, action: #selector(quit), keyEquivalent: "q"))
+        appMenu.items.last?.target = self
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        editMenu.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+
+        NSApp.mainMenu = mainMenu
     }
 
     @objc private func quit() {

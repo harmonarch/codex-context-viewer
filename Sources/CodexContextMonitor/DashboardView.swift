@@ -13,6 +13,7 @@ final class DashboardState: ObservableObject {
     @Published var compressionStatus: CompressionStatus?
     @Published var updateState: AppUpdateState = .idle
     @Published var currentVersion = AppVersion.current
+    @Published var toCodexUsageState: ToCodexUsageState = .notConfigured
     var onResetDisplayBaseline: (() -> Void)?
     var onUndoDisplayBaselineReset: (() -> Void)?
     var onSelectSession: ((String) -> Void)?
@@ -21,6 +22,9 @@ final class DashboardState: ObservableObject {
     var onCheckForUpdates: (() -> Void)?
     var onInstallUpdate: (() -> Void)?
     var onOpenUpdateRelease: (() -> Void)?
+    var onRefreshToCodexUsage: (() -> Void)?
+    var onConfigureToCodexToken: (() -> Void)?
+    var onClearToCodexToken: (() -> Void)?
 
     func resetDisplayBaseline() {
         onResetDisplayBaseline?()
@@ -53,6 +57,18 @@ final class DashboardState: ObservableObject {
     func openUpdateRelease() {
         onOpenUpdateRelease?()
     }
+
+    func refreshToCodexUsage() {
+        onRefreshToCodexUsage?()
+    }
+
+    func configureToCodexToken() {
+        onConfigureToCodexToken?()
+    }
+
+    func clearToCodexToken() {
+        onClearToCodexToken?()
+    }
 }
 
 enum CompressionStatus: Equatable {
@@ -65,22 +81,28 @@ struct DashboardView: View {
     @ObservedObject var state: DashboardState
     @State private var hoveredSegmentID: String?
     @State private var selectedCategoryID: String?
+    @State private var selectedDashboardTab: DashboardTab = .context
     private let text = AppText.current
 
     var body: some View {
         GeometryReader { proxy in
             HStack(spacing: 0) {
-                sessionRail(width: max(232, min(280, proxy.size.width * 0.23)))
+                if selectedDashboardTab == .context {
+                    sessionRail(width: max(232, min(280, proxy.size.width * 0.23)))
 
-                Divider()
+                    Divider()
+                }
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
-                        header
-                        compressionBanner
-                        updateBanner
-                        metricStrip
-                        chartSection
+                        dashboardTabs
+
+                        switch selectedDashboardTab {
+                        case .context:
+                            contextDashboard
+                        case .toCodex:
+                            toCodexDashboard
+                        }
                     }
                     .padding(.horizontal, 28)
                     .padding(.top, 26)
@@ -96,6 +118,93 @@ struct DashboardView: View {
             }
         }
         .frame(minWidth: 980, minHeight: 640)
+    }
+
+    private var dashboardTabs: some View {
+        HStack(spacing: 8) {
+            dashboardTabButton(.context)
+            dashboardTabButton(.toCodex)
+            Spacer()
+        }
+    }
+
+    private func dashboardTabButton(_ tab: DashboardTab) -> some View {
+        Button {
+            selectedDashboardTab = tab
+        } label: {
+            Label(tab.title(text), systemImage: tab.symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    selectedDashboardTab == tab ? Color.blueSoft : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(selectedDashboardTab == tab ? Color.blueAccent.opacity(0.35) : Color.hairline, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var contextDashboard: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            header
+            compressionBanner
+            updateBanner
+            metricStrip
+            chartSection
+        }
+    }
+
+    private var toCodexDashboard: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            toCodexHeader
+            toCodexUsageSection
+        }
+    }
+
+    private var toCodexHeader: some View {
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(text.toCodexUsage, systemImage: "creditcard")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(Color.primaryText)
+                    .lineLimit(1)
+
+                Text(text.toCodexUsageSummary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+
+            HStack(spacing: 12) {
+                if case .loaded(let snapshot) = state.toCodexUsageState {
+                    Label(text.updatedAt(formattedTime(snapshot.generatedAt)), systemImage: "clock")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color.secondaryText)
+                }
+
+                Button {
+                    state.refreshToCodexUsage()
+                } label: {
+                    Label(text.refreshToCodexUsage, systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(SecondaryToolbarButtonStyle())
+                .disabled(state.toCodexUsageState == .loading || state.toCodexUsageState == .notConfigured)
+
+                Button {
+                    state.configureToCodexToken()
+                } label: {
+                    Label(text.configureToCodexToken, systemImage: "key")
+                }
+                .buttonStyle(PrimaryToolbarButtonStyle())
+            }
+        }
     }
 
     private var header: some View {
@@ -765,6 +874,151 @@ struct DashboardView: View {
         }
     }
 
+    private var toCodexUsageSection: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .center, spacing: 12) {
+                Label(text.toCodexUsage, systemImage: "creditcard")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.primaryText)
+
+                Spacer()
+
+                if case .loaded(let snapshot) = state.toCodexUsageState {
+                    Text(text.updatedAt(formattedTime(snapshot.generatedAt)))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.secondaryText)
+                }
+
+                Button {
+                    state.refreshToCodexUsage()
+                } label: {
+                    Label(text.refreshToCodexUsage, systemImage: "arrow.clockwise")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(IconButtonStyle())
+                .help(text.refreshToCodexUsage)
+                .disabled(state.toCodexUsageState == .loading || state.toCodexUsageState == .notConfigured)
+
+                Button {
+                    state.configureToCodexToken()
+                } label: {
+                    Label(text.configureToCodexToken, systemImage: "key")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(IconButtonStyle())
+                .help(text.configureToCodexToken)
+            }
+
+            switch state.toCodexUsageState {
+            case .notConfigured:
+                toCodexMessage(symbol: "key", color: .amberAccent, message: text.toCodexNotConfigured)
+            case .loading:
+                toCodexMessage(symbol: "arrow.triangle.2.circlepath", color: .blueAccent, message: text.loading)
+            case .failed(let message):
+                toCodexMessage(symbol: "exclamationmark.triangle.fill", color: .redAccent, message: text.toCodexLoadFailed(text.translateWarning(message)))
+            case .loaded(let snapshot):
+                if snapshot.hasSubscriptions {
+                    VStack(alignment: .leading, spacing: 12) {
+                        toCodexMetric(kind: .daily, snapshot: snapshot)
+                        toCodexMetric(kind: .weekly, snapshot: snapshot)
+                        toCodexMetric(kind: .monthly, snapshot: snapshot)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    toCodexMessage(symbol: "creditcard", color: .grayAccent, message: text.toCodexNoSubscriptions)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.panelBackground)
+                .shadow(color: .black.opacity(0.05), radius: 14, x: 0, y: 7)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.hairline, lineWidth: 1)
+        )
+    }
+
+    private func toCodexMetric(kind: ToCodexUsagePeriodKind, snapshot: ToCodexUsageSnapshot) -> some View {
+        let period = snapshot.total(for: kind)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: toCodexSymbol(kind))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(toCodexUsageColor(ratio: period.ratio ?? 0, hasLimit: period.limitUSD != nil))
+                    .frame(width: 18)
+
+                Text(toCodexTitle(kind))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.primaryText)
+                    .lineLimit(1)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(formatUSD(period.usedUSD))
+                    .font(.system(size: 21, weight: .semibold))
+                    .foregroundStyle(Color.primaryText)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                Text(period.limitUSD.map { "/ \(formatUSD($0))" } ?? text.unlimited)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.secondaryText)
+                    .lineLimit(1)
+            }
+
+            usageBar(period)
+
+            Label(toCodexResetLine(period), systemImage: "clock")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.secondaryText)
+                .lineLimit(1)
+        }
+        .padding(14)
+        .background(Color.dashboardBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.hairline, lineWidth: 1)
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func usageBar(_ period: ToCodexUsagePeriod) -> some View {
+        GeometryReader { proxy in
+            let ratio = period.ratio ?? 0
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.hairline.opacity(0.85))
+                Capsule()
+                    .fill(toCodexUsageColor(ratio: ratio, hasLimit: period.limitUSD != nil))
+                    .frame(width: max(4, proxy.size.width * ratio))
+            }
+        }
+        .frame(height: 5)
+    }
+
+    private func toCodexMessage(symbol: String, color: Color, message: String) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(color)
+                .frame(width: 18)
+            Text(message)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(color.opacity(0.28), lineWidth: 1)
+        )
+    }
+
     private var selectedCategory: ContextCategory? {
         guard let selectedCategoryID else {
             return nil
@@ -882,6 +1136,58 @@ struct DashboardView: View {
         case .reasoning: .purpleAccent
         case .other: .grayAccent
         }
+    }
+
+    private func toCodexTitle(_ kind: ToCodexUsagePeriodKind) -> String {
+        switch kind {
+        case .daily:
+            text.dailyUsage
+        case .weekly:
+            text.weeklyUsage
+        case .monthly:
+            text.monthlyUsage
+        }
+    }
+
+    private func toCodexSymbol(_ kind: ToCodexUsagePeriodKind) -> String {
+        switch kind {
+        case .daily:
+            "sun.max"
+        case .weekly:
+            "calendar"
+        case .monthly:
+            "calendar.badge.clock"
+        }
+    }
+
+    private func toCodexResetLine(_ period: ToCodexUsagePeriod) -> String {
+        guard let resetAt = period.resetAt,
+              resetAt > Date() else {
+            return text.toCodexResetUnknown
+        }
+        return text.toCodexResetsIn(compactDuration(until: resetAt))
+    }
+
+    private func compactDuration(until date: Date) -> String {
+        let seconds = max(0, Int(date.timeIntervalSince(Date())))
+        let totalMinutes = max(1, Int(ceil(Double(seconds) / 60)))
+        let days = totalMinutes / (24 * 60)
+        let hours = (totalMinutes % (24 * 60)) / 60
+        let minutes = totalMinutes % 60
+        return text.compactDuration(days: days, hours: hours, minutes: minutes)
+    }
+
+    private func toCodexUsageColor(ratio: Double, hasLimit: Bool) -> Color {
+        guard hasLimit else {
+            return .greenAccent
+        }
+        if ratio >= 0.90 {
+            return .redAccent
+        }
+        if ratio >= 0.70 {
+            return .amberAccent
+        }
+        return .greenAccent
     }
 
     private func compressionStatusSymbol(_ status: CompressionStatus) -> String {
@@ -1172,6 +1478,29 @@ private struct ChartSegment: Identifiable {
     let count: Int
 }
 
+private enum DashboardTab: String {
+    case context
+    case toCodex
+
+    var symbol: String {
+        switch self {
+        case .context:
+            "gauge.with.dots.needle.50percent"
+        case .toCodex:
+            "creditcard"
+        }
+    }
+
+    func title(_ text: AppText) -> String {
+        switch self {
+        case .context:
+            text.dashboardContextTab
+        case .toCodex:
+            text.dashboardToCodexTab
+        }
+    }
+}
+
 private enum ContextUsageStatus {
     case healthy
     case normal
@@ -1319,6 +1648,13 @@ private func formatTokens(_ value: Int) -> String {
         return String(format: "%.1fk", Double(value) / 1_000)
     }
     return "\(value)"
+}
+
+private func formatUSD(_ value: Double) -> String {
+    if value >= 100 {
+        return String(format: "$%.0f", value)
+    }
+    return String(format: "$%.2f", value)
 }
 
 private func relativeDate(_ date: Date) -> String {

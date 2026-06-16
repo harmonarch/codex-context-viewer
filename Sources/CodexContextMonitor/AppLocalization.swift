@@ -78,6 +78,69 @@ struct AppText {
     func currentVersionLine(_ version: String) -> String {
         value("Current version \(version)", "当前版本 \(version)")
     }
+    var dashboardContextTab: String { value("Context", "上下文") }
+    var dashboardToCodexTab: String { value("ToCodex", "ToCodex") }
+    var toCodexUsage: String { value("ToCodex Usage", "ToCodex 用量") }
+    var dailyUsage: String { value("Daily", "每天") }
+    var weeklyUsage: String { value("Weekly", "每周") }
+    var monthlyUsage: String { value("Monthly", "每月") }
+    var unlimited: String { value("unlimited", "不限额") }
+    var toCodexUsageSummary: String {
+        value(
+            "Daily, weekly, and monthly quota usage from tocodex.space.",
+            "来自 tocodex.space 的每天、每周、每月额度用量。"
+        )
+    }
+    var refreshToCodexUsage: String { value("Refresh ToCodex Usage", "刷新 ToCodex 用量") }
+    var configureToCodexToken: String { value("Log in to ToCodex", "登录 ToCodex") }
+    var clearToCodexToken: String { value("Log out of ToCodex", "退出 ToCodex") }
+    var toCodexNotConfigured: String {
+        value(
+            "Log in to ToCodex to show daily, weekly, and monthly usage.",
+            "登录 ToCodex 后显示每天、每周、每月用量。"
+        )
+    }
+    var configureToCodexTokenHelp: String {
+        value(
+            "Use the same email and password as tocodex.space. Login credentials are exchanged for a session and saved in macOS Keychain.",
+            "使用 tocodex.space 的邮箱和密码登录。App 会换取登录凭据并保存在 macOS Keychain。"
+        )
+    }
+    var toCodexEmail: String { value("Email", "邮箱") }
+    var toCodexPassword: String { value("Password", "密码") }
+    var toCodexNoSubscriptions: String { value("No active ToCodex subscription found.", "未找到活跃的 ToCodex 订阅。") }
+    var save: String { value("Save", "保存") }
+    var cancel: String { value("Cancel", "取消") }
+    func toCodexLoadFailed(_ message: String) -> String {
+        value("Unable to load ToCodex usage: \(message)", "无法读取 ToCodex 用量：\(message)")
+    }
+    func toCodexUnlimitedUsage(_ usage: String) -> String {
+        value("\(usage) used, unlimited", "已用 \(usage)，不限额")
+    }
+    func toCodexResetsIn(_ time: String) -> String {
+        value("resets in \(time)", "\(time) 后重置")
+    }
+    var toCodexResetUnknown: String { value("reset time unavailable", "重置时间未知") }
+    func compactDuration(days: Int, hours: Int, minutes: Int) -> String {
+        switch language {
+        case .english:
+            if days > 0 {
+                return "\(days)d \(hours)h"
+            }
+            if hours > 0 {
+                return "\(hours)h \(minutes)m"
+            }
+            return "\(minutes)m"
+        case .chinese:
+            if days > 0 {
+                return "\(days) 天 \(hours) 小时"
+            }
+            if hours > 0 {
+                return "\(hours) 小时 \(minutes) 分钟"
+            }
+            return "\(minutes) 分钟"
+        }
+    }
     var checkingForUpdates: String { value("Checking for Updates", "正在检查更新") }
     var downloadingUpdate: String { value("Downloading Update", "正在下载更新") }
     var downloadAndOpenUpdate: String { value("Download and Open", "下载并打开") }
@@ -429,6 +492,20 @@ struct AppText {
             return "最新版本没有包含 DMG 安装包。"
         case "The installer could not be downloaded.":
             return "安装包无法下载。"
+        case "ToCodex login is not configured.":
+            return "尚未登录 ToCodex。"
+        case "ToCodex returned an unreadable response.":
+            return "ToCodex 返回的内容无法读取。"
+        case "ToCodex login expired. Log in again.":
+            return "ToCodex 登录已失效，请重新登录。"
+        case "ToCodex account requires two-factor verification.":
+            return "ToCodex 账号需要二次验证。"
+        case "ToCodex request failed.":
+            return "ToCodex 请求失败。"
+        case "Unable to save ToCodex login.":
+            return "无法保存 ToCodex 登录信息。"
+        case "Unable to delete ToCodex login.":
+            return "无法删除 ToCodex 登录信息。"
         default:
             break
         }
