@@ -665,12 +665,25 @@ struct ToCodexCredentialStore {
     }
 
     private func saveValue(_ value: String, account: String) throws {
-        try deleteValue(account: account, allowMissing: true)
-        var item = baseQuery(account: account)
-        item[kSecValueData as String] = Data(value.utf8)
-        let status = SecItemAdd(item as CFDictionary, nil)
-        guard status == errSecSuccess else {
+        let data = Data(value.utf8)
+        let status = SecItemUpdate(
+            baseQuery(account: account) as CFDictionary,
+            [kSecValueData as String: data] as CFDictionary
+        )
+
+        if status == errSecSuccess {
+            return
+        }
+
+        guard status == errSecItemNotFound else {
             throw ToCodexCredentialStoreError.saveFailed(status)
+        }
+
+        var item = baseQuery(account: account)
+        item[kSecValueData as String] = data
+        let addStatus = SecItemAdd(item as CFDictionary, nil)
+        guard addStatus == errSecSuccess else {
+            throw ToCodexCredentialStoreError.saveFailed(addStatus)
         }
     }
 
