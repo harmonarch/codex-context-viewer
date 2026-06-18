@@ -1,7 +1,7 @@
 import Foundation
 
 struct AppVersion {
-    static let fallback = "0.1.10"
+    static let fallback = "0.1.11"
 
     static var current: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? fallback

@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var updateTask: Task<Void, Never>?
     private var toCodexUsageTask: Task<Void, Never>?
     private var dashboardWindow: NSWindow?
+    private var updateWindow: NSWindow?
     private var refreshGeneration = 0
     private var refreshInProgress = false
     private var showsLoadingState = false
@@ -894,6 +895,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc private func checkForUpdatesFromMenu() {
+        showUpdateWindow()
         checkForUpdates(showUpToDate: true, showFailure: true)
     }
 
@@ -904,6 +906,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         updateTask?.cancel()
         updateState = .checking
+        syncUpdateWindowState()
         updateMenu(isLoading: showsLoadingState || refreshInProgress)
         syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
 
@@ -930,6 +933,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     self.updateState = showFailure ? .failed(self.updateErrorMessage(error)) : .idle
                 }
 
+                self.syncUpdateWindowState()
                 self.updateMenu(isLoading: self.showsLoadingState || self.refreshInProgress)
                 self.syncDashboardState(isLoading: self.showsLoadingState || self.refreshInProgress)
             }
@@ -954,6 +958,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         updateTask?.cancel()
         updateState = .downloading(update)
+        syncUpdateWindowState()
         updateMenu(isLoading: showsLoadingState || refreshInProgress)
         syncDashboardState(isLoading: showsLoadingState || refreshInProgress)
 
@@ -978,6 +983,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     self.updateState = .failed(self.updateErrorMessage(error))
                 }
 
+                self.syncUpdateWindowState()
                 self.updateMenu(isLoading: self.showsLoadingState || self.refreshInProgress)
                 self.syncDashboardState(isLoading: self.showsLoadingState || self.refreshInProgress)
             }
@@ -1097,6 +1103,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc private func openDashboard() {
         showDashboard()
+    }
+
+    private func showUpdateWindow() {
+        if updateWindow == nil {
+            let rootView = UpdateWindowView(state: dashboardState)
+            let hostingView = NSHostingView(rootView: rootView)
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 420, height: 180),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = text.checkForUpdates
+            window.isReleasedWhenClosed = false
+            window.contentView = hostingView
+            window.appearance = selectedTheme.windowAppearance
+            window.center()
+            updateWindow = window
+        }
+
+        syncUpdateWindowState()
+        updateWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func syncUpdateWindowState() {
+        dashboardState.updateState = updateState
+        dashboardState.currentVersion = currentVersion
     }
 
     private func showDashboard() {
